@@ -1,5 +1,5 @@
 import { useMap } from 'react-three-map/maplibre';
-import { lazy, Suspense, useLayoutEffect, useRef, useMemo } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { useThree } from "@react-three/fiber";
 import { useDetectGPU } from "@react-three/drei";
 import { Color, InstancedMesh, Object3D } from "three";
