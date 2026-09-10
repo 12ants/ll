@@ -1,0 +1,41 @@
+{
+  "name": "terrene-world-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.7.0",
+    "lucide-react": "^0.468.0",
+    "maplibre-gl": "^6.9.0",
+    "r3f-perf": "^7.2.3",
+    "react": "~19.2.0",
+    "react-dom": "~19.2.0",
+    "react-map-gl": "^8.1.3",
+    "react-three-map": "^1.0.1",
+    "three": "^0.183.0",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/geojson": "^7946.0.16",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/three": "^0.183.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "r3f-perf": {
+      "@react-three/drei": "$@react-three/drei"
+    }
+  }
+}
