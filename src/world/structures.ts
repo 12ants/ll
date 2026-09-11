@@ -10,6 +10,14 @@ export interface StructurePart {
   /** Instancing group; omit for the default box. */
   kind?: "box" | "cylinder";
 }
+/** Matched [pane, ground floor, lit] tones a building's facade is drawn in. */
+const FACADE_TONES: [pane: string, ground: string, lit: string][] = [
+  ["#333f47", "#5f6a5e", "#f6cf8a"],
+  ["#3c4750", "#57635a", "#f3c77e"],
+  ["#453f3a", "#665a4a", "#f7d38f"],
+  ["#3a4640", "#5a6456", "#f0c98c"],
+  ["#42403f", "#615c53", "#f5cd88"],
+];
 export function collectStructures(
   map: Map,
   c: WorldConfig,
@@ -48,10 +56,12 @@ export function collectStructures(
     if (distance < 750) candidates.push({ f, ring, center, distance });
   }
   candidates.sort((a, b) => a.distance - b.distance);
-  const pool = candidates.slice(0, 90);
+  const pool = candidates.slice(0, 200);
   // Spread the shared cap across every visible building instead of maxing out the
-  // nearest handful and leaving the rest bare.
-  const perBuilding = Math.max(20, Math.floor(cap / Math.max(1, pool.length)));
+  // nearest handful and leaving the rest bare. A low per-building floor matters more
+  // than pool size here: too high a floor exhausts the cap on the first few dozen
+  // buildings and leaves the rest with no windows at all.
+  const perBuilding = Math.max(8, Math.floor(cap / Math.max(1, pool.length)));
   for (const { f, ring, center } of pool) {
     if (parts.length >= cap) break;
     const h = Number(f.properties.render_height) || 9,
@@ -67,7 +77,11 @@ export function collectStructures(
     const hash = hashString(JSON.stringify(ring)),
       tone = seeded(hash),
       lit = c.hour < 7 || c.hour >= 18;
-    // Shared instanced window panes follow the original footprint; no per-building materials.
+    // Each building picks one matched [pane, ground floor, lit] trio from its footprint
+    // hash, so buildings read as visibly distinct structures instead of two shades
+    // repeating across the whole scene.
+    const [paneColor, groundColor, litColor] =
+      FACADE_TONES[Math.floor(tone * FACADE_TONES.length) % FACADE_TONES.length];
     let used = 0;
     const centerPos = localMeters(center, origin);
     for (let i = 1; i < ring.length; i++) {
@@ -108,13 +122,7 @@ export function collectStructures(
               ground_floor ? 0.14 : 0.1,
             ],
             rotation: -Math.atan2(dz, dx),
-            color: ground_floor
-              ? "#5f6a5e"
-              : paneLit
-                ? "#f6cf8a"
-                : tone > 0.65
-                  ? "#333f47"
-                  : "#3c4750",
+            color: ground_floor ? groundColor : paneLit ? litColor : paneColor,
           });
           used++;
         }

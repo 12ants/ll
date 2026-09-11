@@ -72,6 +72,8 @@ function Instances({
       ref={ref}
       args={[undefined, undefined, data.length]}
       frustumCulled={false}
+      castShadow
+      receiveShadow
     >
       {kind === "canopy" ? (
         <icosahedronGeometry args={[1, 1]} />
@@ -112,6 +114,8 @@ function Structures({
       ref={ref}
       args={[undefined, undefined, parts.length]}
       frustumCulled={false}
+      castShadow
+      receiveShadow
     >
       {geometry === "cylinder" ? (
         <cylinderGeometry args={[1, 1, 1, 10]} />
@@ -181,10 +185,31 @@ export function Details({
     ];
   }, [config.hour]);
   const day = useMemo(() => daylight(config.hour), [config.hour]);
+  // Shadow map resolution and coverage scale with the quality tier, same as the
+  // tree/facade budgets: sharp and wide on High, cheap and tight on Eco.
+  const shadow =
+    config.quality === "eco"
+      ? { size: 1024, extent: 400 }
+      : config.quality === "balanced"
+        ? { size: 2048, extent: 600 }
+        : { size: 4096, extent: 800 };
   return (
     <>
       <hemisphereLight args={["#fff7e5", "#77806a", day.hemi]} />
-      <directionalLight position={sun} intensity={day.sceneSun} color={day.sunColor} />
+      <directionalLight
+        position={sun}
+        intensity={day.sceneSun}
+        color={day.sunColor}
+        castShadow
+        shadow-mapSize={[shadow.size, shadow.size]}
+        shadow-camera-left={-shadow.extent}
+        shadow-camera-right={shadow.extent}
+        shadow-camera-top={shadow.extent}
+        shadow-camera-bottom={-shadow.extent}
+        shadow-camera-near={1}
+        shadow-camera-far={3000}
+        shadow-bias={-0.0015}
+      />
       <Structures parts={structuresByGeometry.box} geometry="box" />
       <Structures parts={structuresByGeometry.cylinder} geometry="cylinder" />
       <Instances data={data.trees} kind="canopy" />

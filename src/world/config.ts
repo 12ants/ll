@@ -25,6 +25,19 @@ export const PALETTES = {
 } as const;
 export const PLACES = [
   {
+    id: "stockholm",
+    name: "Gamla Stan",
+    region: "Stockholm, Sweden",
+    type: "Archipelago city",
+    longitude: 18.0686,
+    latitude: 59.3251,
+    zoom: 15.6,
+    bearing: 15,
+    pitch: 60,
+    terrain: false,
+    icon: "water",
+  },
+  {
     id: "manhattan",
     name: "Central Park",
     region: "New York, United States",
@@ -105,7 +118,7 @@ export interface WorldConfig {
 }
 export const DEFAULT_CONFIG: WorldConfig = {
   version: 1,
-  place: "manhattan",
+  place: "stockholm",
   longitude: PLACES[0].longitude,
   latitude: PLACES[0].latitude,
   zoom: PLACES[0].zoom,

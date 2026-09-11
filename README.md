@@ -94,7 +94,9 @@ The vector endpoint must expose the **OpenMapTiles schema**, including `building
 
 This is geographic visualization and an extensible world-rendering project, not photogrammetry or a game simulation. Buildings use real footprints and available source heights; facades, rooftop equipment, trees and park amenities are procedural decoration, not surveyed object positions. Facade details prioritize nearby buildings and have a strict geometry budget. Building color and small height variations are seeded from available feature data. OSM coverage and height accuracy vary by location.
 
-Bridge decks, rails and piers are approximate geometry generated from mapped centerlines; source tiles do not include full engineering dimensions. There are no suspension cables or collision meshes. Roads follow the map surface. Terrain uses a global DEM, so terrain/building alignment is limited by its resolution. No physics, vehicles, interiors, dynamic water simulation, photoreal shadows or mesh-world export are included. JSON export saves settings and camera, not downloaded tiles or 3D geometry.
+Bridge decks, rails and piers are approximate geometry generated from mapped centerlines; source tiles do not include full engineering dimensions. There are no suspension cables or collision meshes. Roads follow the map surface. Terrain uses a global DEM, so terrain/building alignment is limited by its resolution. No physics, vehicles, interiors, dynamic water simulation or mesh-world export are included. JSON export saves settings and camera, not downloaded tiles or 3D geometry.
+
+Trees, benches, facade windows, rooftop equipment and bridge parts cast and receive real-time shadows onto each other. The flat map surface and the building volumes themselves are drawn by MapLibre outside the three.js scene, so they do not receive these shadows; this is not photoreal, whole-scene shadowing.
 
 Public tile services require connectivity; loading/data errors provide a retry action. WebGL2 requires browser hardware support. Focus mode removes editor chrome but retains the required attribution control.
 

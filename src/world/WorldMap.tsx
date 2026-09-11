@@ -198,6 +198,7 @@ function WorldMapView({ config, profile, orbit, onReady, onStatus }: Props) {
           latitude={data.origin[1]}
           longitude={data.origin[0]}
           frameloop={profile ? "always" : "demand"}
+          shadows
         >
           <Details
             data={data}
