@@ -4,7 +4,7 @@ import { useThree } from "@react-three/fiber";
 import { useDetectGPU } from "@react-three/drei";
 import { Color, InstancedMesh, Object3D } from "three";
 import type { Detail, WorldDetails } from "./details-data";
-import { QUALITY, type WorldConfig } from "./config";
+import { QUALITY, daylight, type WorldConfig } from "./config";
 import type { StructurePart } from "./structures";
 const Perf = lazy(() => import("r3f-perf").then((m) => ({ default: m.Perf })));
 const temp = new Object3D(),
@@ -53,14 +53,9 @@ function Instances({
           0.19 + d.tone * 0.09,
           0.29 + d.tone * 0.09,
         );
-      else
-        color.set(
-          kind === "trunk"
-            ? "#71604a"
-            : kind === "seat"
-              ? "#a08b66"
-              : "#626b5b",
-        );
+      else if (kind === "seat")
+        color.setHSL(0.09 + d.tone * 0.03, 0.28 + d.tone * 0.12, 0.38 + d.tone * 0.12);
+      else color.set(kind === "trunk" ? "#71604a" : "#626b5b");
       mesh.setColorAt(i, color);
     });
     mesh.instanceMatrix.needsUpdate = true;
@@ -85,7 +80,13 @@ function Instances({
     </instancedMesh>
   );
 }
-function Structures({ parts }: { parts: StructurePart[] }) {
+function Structures({
+  parts,
+  geometry,
+}: {
+  parts: StructurePart[];
+  geometry: "box" | "cylinder";
+}) {
   const ref = useRef<InstancedMesh>(null);
   useLayoutEffect(() => {
     const mesh = ref.current;
@@ -108,7 +109,11 @@ function Structures({ parts }: { parts: StructurePart[] }) {
       args={[undefined, undefined, parts.length]}
       frustumCulled={false}
     >
-      <boxGeometry />
+      {geometry === "cylinder" ? (
+        <cylinderGeometry args={[1, 1, 1, 10]} />
+      ) : (
+        <boxGeometry />
+      )}
       <meshStandardMaterial roughness={0.65} />
     </instancedMesh>
   ) : null;
@@ -144,6 +149,13 @@ export function Details({
     return()=>{disposed=true;map.off('resize',sync)};
   },[map,config.quality,get]);
   useLayoutEffect(() => invalidate(), [data, config, profile, invalidate]);
+  const structuresByGeometry = useMemo(() => {
+    const box: StructurePart[] = [],
+      cylinder: StructurePart[] = [];
+    for (const p of data.structures)
+      (p.kind === "cylinder" ? cylinder : box).push(p);
+    return { box, cylinder };
+  }, [data.structures]);
   const sun = useMemo(() => {
     const a = ((config.hour - 6) / 14) * Math.PI;
     return [Math.cos(a) * 1000, Math.sin(a) * 900, 500] as [
@@ -152,15 +164,13 @@ export function Details({
       number,
     ];
   }, [config.hour]);
+  const day = useMemo(() => daylight(config.hour), [config.hour]);
   return (
     <>
-      <hemisphereLight args={["#fff7e5", "#77806a", 2.0]} />
-      <directionalLight
-        position={sun}
-        intensity={config.hour > 18 ? 1 : 2.5}
-        color={config.hour > 17 ? "#ffcf9b" : "#fff2d5"}
-      />
-      <Structures parts={data.structures} />
+      <hemisphereLight args={["#fff7e5", "#77806a", day.hemi]} />
+      <directionalLight position={sun} intensity={day.sceneSun} color={day.sunColor} />
+      <Structures parts={structuresByGeometry.box} geometry="box" />
+      <Structures parts={structuresByGeometry.cylinder} geometry="cylinder" />
       <Instances data={data.trees} kind="canopy" />
       <Instances data={data.trees} kind="trunk" />
       <Instances data={data.benches} kind="seat" />
