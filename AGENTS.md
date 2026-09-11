@@ -14,7 +14,11 @@
 - **Two renderers share one canvas.** MapLibre GL JS draws the map; React Three Fiber draws 3D geometry in the *same* WebGL context via `react-three-map`. Occlusion works across both.
 - **World origin is the camera.** `localMeters()` in `src/world/geography.ts` converts lng/lat to meters relative to the current camera center. Y is always `0` for ground-level geometry; terrain height is queried separately.
 - **Detail collection is event-driven, not per-frame.** `src/world/details-data.ts` runs after tile load / camera stop, debounced 250 ms. It produces `WorldDetails` (trees, benches, bridge parts) consumed by `src/world/Details.tsx` instanced meshes.
+<<<<<<< HEAD
 - **Bridge geometry is approximate** (`src/world/structures.ts:154-284`). Decks, railings, and piers are generated from OSM bridge centerlines. Hard cap: 500 parts. Known issue: when `config.terrain` is off, `ground = 0` so bridges float at sea level. See `BRIDGE_RENDERING_PLAN.md` for the planned fix.
+=======
+- **Bridge geometry is approximate** (`src/world/structures.ts:154-284`). Decks, railings, and piers are generated from OSM bridge centerlines. Hard cap: 500 parts. Deck height is one flat value per line (sampled from both line endpoints, not per segment, so multi-vertex bridges don't staircase) plus a small class-based clearance (3-6m); piers interpolate ground along the line and are skipped if the resulting height is negligible. See `docs/BRIDGE_RENDERING_PLAN.md` for the full rationale, including why "always sample the DEM regardless of the terrain toggle" doesn't work with MapLibre's API.
+>>>>>>> a622b0307e92d4075c3df32f295cd35474627186
 
 ## Key constraints and gotchas
 
@@ -23,7 +27,11 @@
 - **Drei override for `r3f-perf`.** `package.json` `overrides` forces `r3f-perf` to use the project’s `@react-three/drei` v10. Do not remove this or the profiler chunk will pull an incompatible Drei version.
 - **MapLibre 6 worker bundling.** In `vite.config.ts`, the worker is imported with `?worker&url`. Replacing it with plain `?url` drops the worker’s shared module and breaks production builds.
 - **MapLibre style must pass spec validation.** `src/world/style.ts` is validated in tests via `@maplibre/maplibre-gl-style-spec`. Style edits must remain spec-compliant.
+<<<<<<< HEAD
 - **Terrain is opt-in.** Default is `terrain: false`. When off, bridge deck Y = `ground (0) + rise` (5–14 m), which floats in non-sea-level terrain. This is a known bug, not a config issue.
+=======
+- **Terrain is opt-in.** Default is `terrain: false`. When off, the whole scene (buildings included) sits at `ground = 0`; bridges match this by design rather than sampling elevation, so deck Y is `0 + clearance` (3–6 m) — see `docs/BRIDGE_RENDERING_PLAN.md`.
+>>>>>>> a622b0307e92d4075c3df32f295cd35474627186
 - **`queryTerrainElevation` is only called when `terrain` is true.** Adding terrain sampling to bridge code requires guarding against the MapLibre method being unavailable or expensive when terrain is disabled.
 - **Performance budgets are enforced in code, not just docs.** Quality tiers (Eco / Balanced / High) cap pixel ratio, tree count, facade parts, and scatter radius. Changes to detail generation must respect these caps.
 - **No API key required.** Default tile sources (`OpenFreeMap` + `Mapterhorn`) are public. Override via `.env.local` with `VITE_VECTOR_TILEJSON` and `VITE_DEM_TILEJSON` if needed.
