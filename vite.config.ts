@@ -14,13 +14,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "map-engine": ["maplibre-gl", "react-map-gl/maplibre"],
-          "three-engine": [
-            "three",
-            "@react-three/fiber",
-            "react-three-map/maplibre",
-          ],
+        manualChunks: (id) => {
+          if (id.includes('maplibre-gl') || id.includes('react-map-gl/maplibre')) return 'map-engine';
+          if (id.includes('three') || id.includes('@react-three/fiber') || id.includes('react-three-map/maplibre')) return 'three-engine';
+          return null;
         },
       },
     },
