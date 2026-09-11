@@ -191,10 +191,16 @@ export function collectBridgeParts(
           Math.hypot(center[0], center[2]) > 2200
         )
           continue;
-        const ground = c.terrain
-          ? (map.queryTerrainElevation([line[i][0], line[i][1]]) ?? 0)
-          : 0;
-        const rise = 5 + Math.max(0, Number(f.properties.layer) || 0) * 3;
+        // Sample both endpoints regardless of the terrain display toggle: MapLibre
+        // returns null (not an error) when terrain isn't active, so this is free to
+        // call unconditionally and picks up real elevation as soon as terrain is on.
+        const groundA =
+          map.queryTerrainElevation([line[i - 1][0], line[i - 1][1]]) ?? 0;
+        const groundB =
+          map.queryTerrainElevation([line[i][0], line[i][1]]) ?? 0;
+        const layer = Math.max(0, Number(f.properties.layer) || 0);
+        const clearance = 4 + layer * 1.5;
+        const deckY = Math.max(groundA, groundB) + clearance;
         const major = ["motorway", "trunk", "primary"].includes(
           f.properties.class,
         );
@@ -214,7 +220,7 @@ export function collectBridgeParts(
           : major
             ? "#a19c8d"
             : "#b0afa1";
-        center[1] = ground + rise;
+        center[1] = deckY;
         const rotation = -Math.atan2(dz, dx);
         parts.push({
           position: center,
@@ -231,6 +237,36 @@ export function collectBridgeParts(
             color: "#7f8479",
             kind: "box",
           });
+        // Abutment ramps: short wedges closing the visual gap between the 2D road
+        // surface and the elevated deck at each end of the span.
+        const rampLength = Math.min(major ? 6 : 3, length / 3);
+        if (rampLength > 0.5 && parts.length < 500) {
+          const dirX = dx / length,
+            dirZ = dz / length;
+          parts.push({
+            position: [
+              a[0] + dirX * (rampLength / 2),
+              (groundA + deckY) / 2,
+              a[2] + dirZ * (rampLength / 2),
+            ],
+            scale: [rampLength, Math.max(0.2, deckY - groundA), width],
+            rotation,
+            color: deckColor,
+            kind: "box",
+          });
+          if (parts.length < 500)
+            parts.push({
+              position: [
+                b[0] - dirX * (rampLength / 2),
+                (groundB + deckY) / 2,
+                b[2] - dirZ * (rampLength / 2),
+              ],
+              scale: [rampLength, Math.max(0.2, deckY - groundB), width],
+              rotation,
+              color: deckColor,
+              kind: "box",
+            });
+        }
         // Railings: a slim top rail plus evenly spaced vertical posts, in place of a solid slab.
         for (const side of [-1, 1]) {
           const offX = -Math.sin(rotation) * width * 0.48 * side,
@@ -269,9 +305,12 @@ export function collectBridgeParts(
           for (let pi = 0; pi < pierCount; pi++) {
             if (parts.length >= 500) break;
             const t = pierCount === 1 ? 0.5 : pi / (pierCount - 1);
+            // Interpolate ground along the span so piers reach the terrain under
+            // them instead of all sharing one endpoint's height.
+            const pierBottom = groundA + (groundB - groundA) * t;
             parts.push({
-              position: [a[0] + dx * t, ground + rise / 2, a[2] + dz * t],
-              scale: [pierRadius, rise, pierRadius],
+              position: [a[0] + dx * t, (pierBottom + deckY) / 2, a[2] + dz * t],
+              scale: [pierRadius, deckY - pierBottom, pierRadius],
               rotation: 0,
               color: "#989c91",
               kind: "cylinder",
