@@ -48,7 +48,11 @@ export function collectStructures(
     if (distance < 750) candidates.push({ f, ring, center, distance });
   }
   candidates.sort((a, b) => a.distance - b.distance);
-  for (const { f, ring, center } of candidates.slice(0, 90)) {
+  const pool = candidates.slice(0, 90);
+  // Spread the shared cap across every visible building instead of maxing out the
+  // nearest handful and leaving the rest bare.
+  const perBuilding = Math.max(20, Math.floor(cap / Math.max(1, pool.length)));
+  for (const { f, ring, center } of pool) {
     if (parts.length >= cap) break;
     const h = Number(f.properties.render_height) || 9,
       id = Number(f.id ?? h),
@@ -61,49 +65,56 @@ export function collectStructures(
       ? (map.queryTerrainElevation([center[0], center[1]]) ?? 0)
       : 0;
     const hash = hashString(JSON.stringify(ring)),
-      tone = seeded(hash);
-    // Shared instanced window strips follow the original footprint; no per-building materials.
+      tone = seeded(hash),
+      lit = c.hour < 7 || c.hour >= 18;
+    // Shared instanced window panes follow the original footprint; no per-building materials.
     let used = 0;
+    const centerPos = localMeters(center, origin);
     for (let i = 1; i < ring.length; i++) {
       const a = localMeters(ring[i - 1], origin),
         b = localMeters(ring[i], origin),
         dx = b[0] - a[0],
         dz = b[2] - a[2],
         len = Math.hypot(dx, dz);
-      if (len < 5 || len > 130) continue;
+      if (len < 5) continue;
       const columns = Math.max(1, Math.floor(len / 4)),
-        floors = Math.floor((height - base * c.heightScale) / 3.5);
-      const stride = Math.max(1, Math.ceil((columns * floors) / 180));
-      for (let floor = 0; floor < floors; floor++)
-        for (let col = 0; col < columns; col++) {
-          if (
-            (floor * columns + col) % stride ||
-            used >= 240 ||
-            parts.length >= cap
-          )
-            continue;
+        floors = Math.max(0, Math.floor((height - base * c.heightScale) / 3.5));
+      if (!floors) continue;
+      const remaining = Math.min(perBuilding - used, cap - parts.length);
+      if (remaining <= 0) continue;
+      // Thin a regular floor/column grid down to the remaining budget, rather than
+      // scattering single cells, so the result reads as window bands, not speckle.
+      const step = Math.max(1, Math.ceil(Math.sqrt((columns * floors) / remaining)));
+      // Outward wall normal (away from the footprint center) keeps panes from z-fighting
+      // against MapLibre's coplanar fill-extrusion face.
+      const nx = a[0] + dx / 2 - centerPos[0],
+        nz = a[2] + dz / 2 - centerPos[2],
+        nLen = Math.hypot(nx, nz) || 1;
+      for (let floor = 0; floor < floors; floor += step)
+        for (let col = 0; col < columns; col += step) {
+          if (used >= perBuilding || parts.length >= cap) continue;
           const t = (col + 0.5) / columns,
             ground_floor = floor === 0 && base === 0,
-            lit = seeded(hash + floor * 131 + col * 7 + 17) > 0.84;
+            paneLit = lit && seeded(hash + floor * 97 + col * 13) > 0.62;
           parts.push({
             position: [
-              a[0] + dx * t,
+              a[0] + dx * t + (nx / nLen) * 0.08,
               ground + base * c.heightScale + floor * 3.5 + 2.1,
-              a[2] + dz * t,
+              a[2] + dz * t + (nz / nLen) * 0.08,
             ],
             scale: [
-              Math.min(2.0, (len / columns) * 0.6),
-              ground_floor ? 2.1 : 1.5,
-              ground_floor ? 0.16 : 0.12,
+              Math.min(2.2, (len / columns) * 0.7),
+              ground_floor ? 2.1 : 1.6,
+              ground_floor ? 0.14 : 0.1,
             ],
             rotation: -Math.atan2(dz, dx),
             color: ground_floor
               ? "#5f6a5e"
-              : lit
-                ? "#d9cf9c"
+              : paneLit
+                ? "#f6cf8a"
                 : tone > 0.65
-                  ? "#8e9894"
-                  : "#93988b",
+                  ? "#333f47"
+                  : "#3c4750",
           });
           used++;
         }
