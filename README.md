@@ -19,6 +19,13 @@ npm run build    # strict TypeScript check and production bundle
 npm run preview  # serve the built application
 ```
 
+For browser regression checks, start `npm run dev`, then run
+`npm run test:browser` in another terminal. Install Chromium once with
+`npx playwright install chromium` if needed. The suite uses real public tiles
+and software WebGL, checks the shared renderer at device pixel ratio 2,
+and writes captures to `.artifacts/`. Set `TEST_URL` to use a different dev-server
+address. It requires internet access and may take several minutes.
+
 ## Editor
 
 - **Locations:** Central Park, Chamonix, San Francisco and Amsterdam, or enter latitude and longitude for any location.
@@ -45,7 +52,8 @@ Ready-made modules in use:
 - **@react-three/drei:** `useDetectGPU` device classification, available to the map status interface for application extensions.
 - **react-three-map:** geographic coordinates, camera synchronization and shared rendering context.
 - **react-map-gl:** declarative React wrapper around MapLibre.
-- **r3f-perf:** optional runtime profiling, imported only when opened.
+- **r3f-perf:** optional runtime profiling, imported only when opened. Its
+  headless sampler feeds a DOM statistics panel, avoiding a second WebGL canvas.
 - **Zustand:** small configuration store, independent of camera animation.
 
 The profiler's older Drei dependency is overridden to the app's Drei 10 version. React is pinned to the 19.2 minor series to match R3F's supported peer range. MapLibre 6's worker is bundled explicitly with Vite `?worker&url`; do not replace this with a plain `?url` asset import, which loses the worker's shared module in a production build.

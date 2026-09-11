@@ -1337,3 +1337,28 @@ p {
     animation-duration: 3s !important;
   }
 }
+
+.performance-monitor {
+  position: absolute;
+  z-index: 5;
+  left: 24px;
+  top: 160px;
+  max-width: calc(100vw - 48px);
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #f7f8f0ee;
+  color: #334939;
+  pointer-events: none;
+  font-size: 11px;
+}
+.performance-monitor dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0 0;
+}
+.performance-monitor dt { opacity: 0.7; }
+.performance-monitor dd {
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+}

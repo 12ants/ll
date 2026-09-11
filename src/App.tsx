@@ -1,6 +1,8 @@
 import { wrapLongitude } from './world/geography';
 import {
   Component,
+  lazy,
+  Suspense,
   useState,
   useCallback,
   useRef,
@@ -37,6 +39,8 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { WorldMap, type MapStatus } from "./world/WorldMap";
 import { Inspector } from "./components/Inspector";
 import { DEFAULT_CONFIG, PLACES, parseConfig, useWorld } from "./world/config";
+
+const PerformanceMonitor = lazy(() => import("./components/PerformanceMonitor"));
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob),
@@ -249,6 +253,11 @@ export default function App() {
           />
         </WorldBoundary>
       </div>
+      {profile && (
+        <Suspense fallback={null}>
+          <PerformanceMonitor />
+        </Suspense>
+      )}
       <header className="topbar chrome">
         <a className="brand" href="/" aria-label="Terrene home">
           <span className="brand-mark">
@@ -266,6 +275,7 @@ export default function App() {
           </span>
           <button
             className="quiet-button"
+            aria-label="Save world"
             onClick={() => {
               try {
                 replace(cameraConfig());
@@ -477,7 +487,9 @@ export default function App() {
       <footer className="statusbar chrome">
         <div>
           <span className={`live-dot ${status.loading ? "loading" : ""}`} />
-          {!status.ready
+          {status.error
+            ? "Some map data is unavailable"
+            : !status.ready
             ? "Preparing your world"
             : status.loading
               ? "Streaming landscape"

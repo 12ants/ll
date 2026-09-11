@@ -180,7 +180,6 @@ function WorldMapView({ config, profile, orbit, onReady, onStatus }: Props) {
       fadeDuration={150}
       onLoad={() => {
         setReady(true);
-        setError(undefined);
         setLoading(false);
         onReady(ref.current!.getMap());
       }}

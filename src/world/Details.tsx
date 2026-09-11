@@ -1,12 +1,16 @@
 import { useMap } from 'react-three-map/maplibre';
-import { lazy, Suspense, useLayoutEffect, useRef, useMemo } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { useThree } from "@react-three/fiber";
 import { useDetectGPU } from "@react-three/drei";
 import { Color, InstancedMesh, Object3D } from "three";
 import type { Detail, WorldDetails } from "./details-data";
 import { QUALITY, type WorldConfig } from "./config";
 import type { StructurePart } from "./structures";
-const Perf = lazy(() => import("r3f-perf").then((m) => ({ default: m.Perf })));
+const PerformanceSampler = lazy(() =>
+  import("../components/PerformanceMonitor").then((m) => ({
+    default: m.PerformanceSampler,
+  })),
+);
 const temp = new Object3D(),
   color = new Color();
 function Instances({
@@ -130,19 +134,31 @@ export function Details({
   onTier: (tier: number) => void;
 }) {
   const invalidate = useThree((s) => s.invalidate);
-  const map=useMap();
-  const get=useThree(s=>s.get);
-  useEffect(()=>{
-    let disposed=false;
-    const sync=()=>queueMicrotask(()=>{
-      if(disposed)return;
-      const ratio=Math.min(window.devicePixelRatio||1,QUALITY[config.quality].dpr);
-      const store=get();
-      if(store.viewport.dpr!==ratio)store.setDpr(ratio);
+  const map = useMap();
+  const get = useThree((s) => s.get);
+  useEffect(() => {
+    let disposed = false;
+    const sync = () => queueMicrotask(() => {
+      if (disposed) return;
+      const ratio = Math.min(window.devicePixelRatio || 1, QUALITY[config.quality].dpr);
+      const store = get();
+      // The bridge's resize handler resets DPR before reading the canvas size.
+      // R3F can then write its previous size back to that shared canvas. Read
+      // the container after the handler, so both engines keep the same viewport.
+      const container = map.getContainer();
+      const { width, height } = container.getBoundingClientRect();
+      if (store.viewport.dpr !== ratio) store.setDpr(ratio);
+      if (store.size.width !== width || store.size.height !== height) {
+        store.setSize(width, height);
+      }
     });
-    map.on('resize',sync);sync();
-    return()=>{disposed=true;map.off('resize',sync)};
-  },[map,config.quality,get]);
+    map.on("resize", sync);
+    sync();
+    return () => {
+      disposed = true;
+      map.off("resize", sync);
+    };
+  }, [map, config.quality, get]);
   useLayoutEffect(() => invalidate(), [data, config, profile, invalidate]);
   const sun = useMemo(() => {
     const a = ((config.hour - 6) / 14) * Math.PI;
@@ -168,7 +184,7 @@ export function Details({
       <Instances data={data.benches} kind="bin" />
       <Suspense fallback={null}>
         <DeviceHint onTier={onTier} />
-        {profile && <Perf position="bottom-left" minimal antialias={false} />}
+        {profile && <PerformanceSampler logsPerSecond={2} />}
       </Suspense>
     </>
   );
