@@ -129,6 +129,126 @@ export const DEFAULT_CONFIG: WorldConfig = {
   quality: "balanced",
   seed: 42,
 };
+export interface Daylight {
+  sunColor: string;
+  mapLight: number;
+  sceneSun: number;
+  hemi: number;
+  sky: string;
+  horizon: string;
+  fog: string;
+  hillHigh: string;
+  hillShadow: string;
+}
+const DAYLIGHT_KEYFRAMES: (Daylight & { hour: number })[] = [
+  {
+    hour: 6,
+    sunColor: "#c9d6e8",
+    mapLight: 0.38,
+    sceneSun: 1.5,
+    hemi: 1.5,
+    sky: "#9fb9c4",
+    horizon: "#e7d9c8",
+    fog: "#cdd2c0",
+    hillHigh: "#e8ddc9",
+    hillShadow: "#57606b",
+  },
+  {
+    hour: 9,
+    sunColor: "#fff2d5",
+    mapLight: 0.48,
+    sceneSun: 2.5,
+    hemi: 2.0,
+    sky: "#a9c6c7",
+    horizon: "#eee6d6",
+    fog: "#dbdfcd",
+    hillHigh: "#fdf3d9",
+    hillShadow: "#586049",
+  },
+  {
+    hour: 13,
+    sunColor: "#fff7ec",
+    mapLight: 0.48,
+    sceneSun: 2.6,
+    hemi: 2.0,
+    sky: "#b7ccc8",
+    horizon: "#ece9db",
+    fog: "#d6dccd",
+    hillHigh: "#fff3d9",
+    hillShadow: "#575f49",
+  },
+  {
+    hour: 17,
+    sunColor: "#ffcf9b",
+    mapLight: 0.42,
+    sceneSun: 2.3,
+    hemi: 1.8,
+    sky: "#b9c2c9",
+    horizon: "#f0d9b8",
+    fog: "#e0cdb0",
+    hillHigh: "#ffe3b0",
+    hillShadow: "#5a5340",
+  },
+  {
+    hour: 19,
+    sunColor: "#ff9d6a",
+    mapLight: 0.32,
+    sceneSun: 1.0,
+    hemi: 1.2,
+    sky: "#7d93ad",
+    horizon: "#e2a87e",
+    fog: "#c8a98f",
+    hillHigh: "#f0b787",
+    hillShadow: "#4a4550",
+  },
+  {
+    hour: 20,
+    sunColor: "#7f96c9",
+    mapLight: 0.28,
+    sceneSun: 0.4,
+    hemi: 0.7,
+    sky: "#41506e",
+    horizon: "#6b6f82",
+    fog: "#5c6270",
+    hillHigh: "#8a93a8",
+    hillShadow: "#333846",
+  },
+];
+export function mixHex(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16),
+    pb = parseInt(b.slice(1), 16);
+  const channel = (shift: number) => {
+    const av = (pa >> shift) & 255,
+      bv = (pb >> shift) & 255;
+    return Math.round(av + (bv - av) * t);
+  };
+  return (
+    "#" +
+    [channel(16), channel(8), channel(0)]
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+/** A continuous dawn-to-night lighting curve, shared by the MapLibre style and the Three.js scene. */
+export function daylight(hour: number): Daylight {
+  const h = Math.min(20, Math.max(6, hour));
+  let i = 0;
+  while (i < DAYLIGHT_KEYFRAMES.length - 2 && DAYLIGHT_KEYFRAMES[i + 1].hour < h) i++;
+  const a = DAYLIGHT_KEYFRAMES[i],
+    b = DAYLIGHT_KEYFRAMES[i + 1],
+    t = (h - a.hour) / (b.hour - a.hour);
+  return {
+    sunColor: mixHex(a.sunColor, b.sunColor, t),
+    mapLight: a.mapLight + (b.mapLight - a.mapLight) * t,
+    sceneSun: a.sceneSun + (b.sceneSun - a.sceneSun) * t,
+    hemi: a.hemi + (b.hemi - a.hemi) * t,
+    sky: mixHex(a.sky, b.sky, t),
+    horizon: mixHex(a.horizon, b.horizon, t),
+    fog: mixHex(a.fog, b.fog, t),
+    hillHigh: mixHex(a.hillHigh, b.hillHigh, t),
+    hillShadow: mixHex(a.hillShadow, b.hillShadow, t),
+  };
+}
 export const QUALITY = {
   eco: { dpr: 1, trees: 500, radius: 850, cache: 80 },
   balanced: { dpr: 1.5, trees: 1800, radius: 1250, cache: 140 },

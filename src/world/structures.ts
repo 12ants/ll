@@ -197,13 +197,19 @@ export function collectBridgeParts(
           : major
             ? 1.1
             : 0.8;
+        // Echo the flat map's class-based road-surface tone on the deck for continuity.
+        const deckColor = ["path", "track"].includes(f.properties.class)
+          ? "#c7b796"
+          : major
+            ? "#a19c8d"
+            : "#b0afa1";
         center[1] = ground + rise;
         const rotation = -Math.atan2(dz, dx);
         parts.push({
           position: center,
           scale: [length, deckThickness, width],
           rotation,
-          color: "#b0afa1",
+          color: deckColor,
           kind: "box",
         });
         if (major)
@@ -220,12 +226,12 @@ export function collectBridgeParts(
             offZ = Math.cos(rotation) * width * 0.48 * side;
           parts.push({
             position: [center[0] + offX, center[1] + 0.95, center[2] + offZ],
-            scale: [length, 0.12, 0.12],
+            scale: [length, 0.14, 0.14],
             rotation,
             color: "#7c8179",
             kind: "box",
           });
-          const postCount = Math.max(2, Math.min(24, Math.round(length / 6)));
+          const postCount = Math.max(2, Math.min(28, Math.round(length / 5)));
           for (let pi = 0; pi <= postCount; pi++) {
             if (parts.length >= 500) break;
             const t = pi / postCount;
@@ -235,7 +241,7 @@ export function collectBridgeParts(
                 center[1] + 0.6,
                 a[2] + dz * t + offZ,
               ],
-              scale: [0.12, 0.75, 0.12],
+              scale: [0.14, 0.75, 0.14],
               rotation,
               color: "#7c8179",
               kind: "box",
@@ -246,14 +252,15 @@ export function collectBridgeParts(
         if (length > 12) {
           const pierCount = Math.max(
             2,
-            Math.min(8, Math.round(length / 45) + 1),
+            Math.min(9, Math.round(length / 38) + 1),
           );
+          const pierRadius = major ? 1.5 : 1.15;
           for (let pi = 0; pi < pierCount; pi++) {
             if (parts.length >= 500) break;
             const t = pierCount === 1 ? 0.5 : pi / (pierCount - 1);
             parts.push({
               position: [a[0] + dx * t, ground + rise / 2, a[2] + dz * t],
-              scale: [1.1, rise, 1.1],
+              scale: [pierRadius, rise, pierRadius],
               rotation: 0,
               color: "#989c91",
               kind: "cylinder",

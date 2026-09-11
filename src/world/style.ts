@@ -4,7 +4,7 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "maplibre-gl";
-import { PALETTES, type WorldConfig } from "./config";
+import { PALETTES, daylight, mixHex, type WorldConfig } from "./config";
 import { ROAD_CLASSES } from "./geography";
 export const VECTOR_URL =
   import.meta.env.VITE_VECTOR_TILEJSON ||
@@ -39,6 +39,10 @@ export function buildingHeight(c: WorldConfig): ExpressionSpecification {
 }
 export function createWorldStyle(c: WorldConfig): StyleSpecification {
   const p = PALETTES[c.palette];
+  const d = daylight(c.hour);
+  // Blend a touch of the active palette into fixed landcover tones, so foliage
+  // reads differently across palettes instead of staying one hardcoded green.
+  const woodColor = mixHex("#879c73", p.park, 0.28);
   const visible = (v: boolean) => ({
     visibility: v ? ("visible" as const) : ("none" as const),
   });
@@ -144,7 +148,7 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
           "match",
           ["get", "class"],
           "wood",
-          "#879c73",
+          woodColor,
           "grass",
           p.park,
           "sand",
@@ -190,8 +194,8 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
       source: "elevation",
       layout: visible(c.terrain),
       paint: {
-        "hillshade-shadow-color": "#575f49",
-        "hillshade-highlight-color": "#fff3d9",
+        "hillshade-shadow-color": d.hillShadow,
+        "hillshade-highlight-color": d.hillHigh,
         "hillshade-exaggeration": 0.3,
       },
     },
@@ -234,8 +238,8 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
         "line-opacity": 0.55,
       },
     },
-    road("bridge-edges", bridge, "#8e9187", 3, c.bridges),
-    road("bridges", bridge, "#c9c4b4", 0, c.bridges),
+    road("bridge-edges", bridge, "#7c8179", 3, c.bridges),
+    road("bridges", bridge, roadSurface, 0, c.bridges),
     {
       id: "buildings",
       type: "fill-extrusion",
@@ -293,8 +297,8 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
     layers,
     light: {
       anchor: "map",
-      color: c.hour > 17 ? "#ffdeb0" : "#fff3dd",
-      intensity: c.hour > 18 ? 0.3 : 0.48,
+      color: d.sunColor,
+      intensity: d.mapLight,
       position: [
         1.5,
         90 + (c.hour - 12) * 15,
@@ -302,9 +306,9 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
       ],
     },
     sky: {
-      "sky-color": "#b7ccc8",
-      "horizon-color": "#ece9db",
-      "fog-color": "#d6dccd",
+      "sky-color": d.sky,
+      "horizon-color": d.horizon,
+      "fog-color": d.fog,
       "sky-horizon-blend": 0.85,
       "horizon-fog-blend": 0.7,
       "fog-ground-blend": 0.65,
