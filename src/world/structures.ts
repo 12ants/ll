@@ -169,20 +169,65 @@ export function collectBridgeParts(
         : f.geometry.type === "MultiLineString"
           ? f.geometry.coordinates
           : [];
-    for (const line of lines)
+    const major = ["motorway", "trunk", "primary"].includes(
+      f.properties.class,
+    );
+    const width = ["path", "track"].includes(f.properties.class)
+      ? 3
+      : major
+        ? 14
+        : 8;
+    const deckThickness = ["path", "track"].includes(f.properties.class)
+      ? 0.5
+      : major
+        ? 1.1
+        : 0.8;
+    // Echo the flat map's class-based road-surface tone on the deck for continuity.
+    const deckColor = ["path", "track"].includes(f.properties.class)
+      ? "#c7b796"
+      : major
+        ? "#a19c8d"
+        : "#b0afa1";
+    // Small, capped clearance above the road grade — not an absolute height, since
+    // OSM's `layer` tag is only a relative stacking hint.
+    const layer = Math.max(0, Number(f.properties.layer) || 0);
+    const clearance = (major ? 4 : 3) + Math.min(layer, 2) * 1.5;
+    for (const line of lines) {
+      if (parts.length > 500) return parts;
+      if (line.length < 2) continue;
+      // Sample ground once per line (both ends), not per segment: a single flat deck
+      // height for the whole span avoids a per-segment staircase on multi-vertex lines.
+      // queryTerrainElevation returns null unless map.setTerrain() is active, so this
+      // stays gated on c.terrain exactly like the rest of the scene (buildings included).
+      const groundStart = c.terrain
+        ? (map.queryTerrainElevation([line[0][0], line[0][1]]) ?? 0)
+        : 0;
+      const lastPt = line[line.length - 1];
+      const groundEnd = c.terrain
+        ? (map.queryTerrainElevation([lastPt[0], lastPt[1]]) ?? 0)
+        : 0;
+      const deckY = Math.max(groundStart, groundEnd) + clearance;
+      const pts = line.map((p) => localMeters(p, origin));
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++)
+        cum.push(
+          cum[i - 1] +
+            Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][2] - pts[i - 1][2]),
+        );
+      const totalLen = cum[cum.length - 1];
       for (let i = 1; i < line.length; i++) {
         if (parts.length > 500) return parts;
         const key = JSON.stringify([line[i - 1], line[i]]);
         if (seen.has(key)) continue;
         seen.add(key);
-        const a = localMeters(line[i - 1], origin),
-          b = localMeters(line[i], origin),
+        const a = pts[i - 1],
+          b = pts[i],
           dx = b[0] - a[0],
           dz = b[2] - a[2],
           length = Math.hypot(dx, dz);
         const center: [number, number, number] = [
           (a[0] + b[0]) / 2,
-          0,
+          deckY,
           (a[2] + b[2]) / 2,
         ];
         if (
@@ -191,30 +236,6 @@ export function collectBridgeParts(
           Math.hypot(center[0], center[2]) > 2200
         )
           continue;
-        const ground = c.terrain
-          ? (map.queryTerrainElevation([line[i][0], line[i][1]]) ?? 0)
-          : 0;
-        const rise = 5 + Math.max(0, Number(f.properties.layer) || 0) * 3;
-        const major = ["motorway", "trunk", "primary"].includes(
-          f.properties.class,
-        );
-        const width = ["path", "track"].includes(f.properties.class)
-          ? 3
-          : major
-            ? 14
-            : 8;
-        const deckThickness = ["path", "track"].includes(f.properties.class)
-          ? 0.5
-          : major
-            ? 1.1
-            : 0.8;
-        // Echo the flat map's class-based road-surface tone on the deck for continuity.
-        const deckColor = ["path", "track"].includes(f.properties.class)
-          ? "#c7b796"
-          : major
-            ? "#a19c8d"
-            : "#b0afa1";
-        center[1] = ground + rise;
         const rotation = -Math.atan2(dz, dx);
         parts.push({
           position: center,
@@ -242,7 +263,9 @@ export function collectBridgeParts(
             color: "#7c8179",
             kind: "box",
           });
-          const postCount = Math.max(2, Math.min(28, Math.round(length / 5)));
+          // Spacing widened (was 5m/28 cap) so long bridges cost fewer of the shared
+          // 500-part budget, which otherwise silently drops entire later bridges in view.
+          const postCount = Math.max(2, Math.min(20, Math.round(length / 8)));
           for (let pi = 0; pi <= postCount; pi++) {
             if (parts.length >= 500) break;
             const t = pi / postCount;
@@ -259,7 +282,9 @@ export function collectBridgeParts(
             });
           }
         }
-        // Piers: evenly spaced round columns along the span, instead of one central slab.
+        // Piers: evenly spaced round columns along the span, each reaching from the
+        // deck down to the terrain interpolated at its own position (flat ground when
+        // terrain is off), instead of a fixed length that floats or clips on slopes.
         if (length > 12) {
           const pierCount = Math.max(
             2,
@@ -269,9 +294,15 @@ export function collectBridgeParts(
           for (let pi = 0; pi < pierCount; pi++) {
             if (parts.length >= 500) break;
             const t = pierCount === 1 ? 0.5 : pi / (pierCount - 1);
+            const globalT = totalLen > 0 ? (cum[i - 1] + t * length) / totalLen : 0;
+            const groundAtPier = c.terrain
+              ? groundStart + (groundEnd - groundStart) * globalT
+              : 0;
+            const pierHeight = deckY - groundAtPier;
+            if (pierHeight < 0.5) continue;
             parts.push({
-              position: [a[0] + dx * t, ground + rise / 2, a[2] + dz * t],
-              scale: [pierRadius, rise, pierRadius],
+              position: [a[0] + dx * t, groundAtPier + pierHeight / 2, a[2] + dz * t],
+              scale: [pierRadius, pierHeight, pierRadius],
               rotation: 0,
               color: "#989c91",
               kind: "cylinder",
@@ -279,6 +310,7 @@ export function collectBridgeParts(
           }
         }
       }
+    }
   }
   return parts;
 }
