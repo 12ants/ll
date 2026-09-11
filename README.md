@@ -7,21 +7,21 @@ A customizable 3D geographic world editor built with React Three Fiber and MapLi
 Requires Node.js 22.12+ (developed with Node 26).
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open http://localhost:5173. No API key is required for the default data sources. Internet access and WebGL2 are required.
 
 ```bash
-npm test          # geography, configuration and style checks
-npm run build    # strict TypeScript check and production bundle
-npm run preview  # serve the built application
+pnpm test          # geography, configuration and style checks
+pnpm build    # strict TypeScript check and production bundle
+pnpm preview  # serve the built application
 ```
 
-For browser regression checks, start `npm run dev`, then run
-`npm run test:browser` in another terminal. Install Chromium once with
-`npx playwright install chromium` if needed. The suite uses real public tiles
+For browser regression checks, start `pnpm dev`, then run
+`pnpm test:browser` in another terminal. Install Chromium once with
+`pnpm exec playwright install chromium` if needed. The suite uses real public tiles
 and software WebGL, checks the shared renderer at device pixel ratio 2,
 and writes captures to `.artifacts/`. Set `TEST_URL` to use a different dev-server
 address. It requires internet access and may take several minutes.
