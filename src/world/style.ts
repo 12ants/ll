@@ -52,6 +52,19 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
     SURFACE_FILTER,
     ["==", ["get", "brunnel"], "bridge"],
   ];
+  const majorClasses = ["motorway", "trunk", "primary"];
+  // Class-based surface tone: asphalt for major roads, dirt for trails, pavers for pedestrian ways.
+  const roadSurface: ExpressionSpecification = [
+    "match",
+    ["get", "class"],
+    ["motorway", "trunk"],
+    "#8f897c",
+    ["path", "track"],
+    "#c7b796",
+    ["pedestrian", "living_street"],
+    "#d6cfba",
+    p.road,
+  ];
   const width: ExpressionSpecification = [
     "interpolate",
     ["exponential", 2],
@@ -96,7 +109,7 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
   const road = (
     id: string,
     filter: FilterSpecification,
-    color: string,
+    color: string | ExpressionSpecification,
     extra: number,
     on: boolean,
   ): LayerSpecification => ({
@@ -201,7 +214,26 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
       },
     },
     road("road-edges", groundRoad, "#dcd8ca", 2, c.roads),
-    road("roads", groundRoad, p.road, 0, c.roads),
+    road("roads", groundRoad, roadSurface, 0, c.roads),
+    {
+      id: "road-centerline",
+      type: "line",
+      source: "world",
+      "source-layer": "transportation",
+      minzoom: 15,
+      filter: [
+        "all",
+        groundRoad,
+        ["in", ["get", "class"], ["literal", majorClasses]],
+      ],
+      layout: { ...visible(c.roads), "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": "#f1ecd9",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0, 16, 1, 19, 3],
+        "line-dasharray": [3, 3],
+        "line-opacity": 0.55,
+      },
+    },
     road("bridge-edges", bridge, "#8e9187", 3, c.bridges),
     road("bridges", bridge, "#c9c4b4", 0, c.bridges),
     {
