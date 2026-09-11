@@ -26,9 +26,15 @@ and software WebGL, checks the shared renderer at device pixel ratio 2,
 and writes captures to `.artifacts/`. Set `TEST_URL` to use a different dev-server
 address. It requires internet access and may take several minutes.
 
+## Scripts
+
+- `scripts/verify.sh` — install, merge-conflict-marker scan, unit tests, type check. Run before committing.
+- `scripts/check-merge-markers.sh` — scans the repo for leftover unresolved `<<<<<<<`/`=======`/`>>>>>>>` git conflict markers (this has bitten this repo before — see git history).
+- `scripts/toggle-rtk-hook.sh off|on|status` — temporarily disables/restores the global rtk Claude Code hook (`~/.claude/settings.json`). Needed because a worktree-isolated Claude Code session refuses to run *any* Bash command containing `git` while that hook is active — it can't verify a command wrapped by rtk targets the right directory. Must be run by a human in a real terminal; Claude Code blocks itself from self-modifying its own hook config.
+
 ## Editor
 
-- **Locations:** Central Park, Chamonix, San Francisco and Amsterdam, or enter latitude and longitude for any location.
+- **Locations:** Gamla Stan (Stockholm, the default), Central Park, Chamonix, San Francisco and Amsterdam, or enter latitude and longitude for any location.
 - **Architecture:** building visibility, facade/roof details, height scale, subtle height variation and three material palettes.
 - **Landscape:** vegetation, density, park surfaces, water color, real terrain and elevation exaggeration.
 - **Infrastructure:** surface roads and paths, bridges with approximate physical decks and supports, park benches and bins.
