@@ -31,8 +31,6 @@ Recommended: use a small repeating masonry/panel pattern on the existing extrusi
 
 Only redistributing window boxes cannot meet coverage when there are more walls than parts. Replacing every building with custom R3F extrusions would allow separate roof and wall shaders and precise window grids, but requires ownership of building geometry, clipping, terrain alignment and tile lifecycle. Keep that as a separately scoped alternative if the pattern prototype fails the acceptance checks; do not claim universal coverage from a capped overlay alone.
 
-<<<<<<< HEAD
-=======
 ### 2026-09-11 — Pattern prototype (F1) built, prototyped, and rejected on the acceptance checks
 
 **What was built:** `src/world/facade-pattern.ts` (`createFacadePattern`, `facadeImageId`), wired into `style.ts`'s `buildings` layer via `fill-extrusion-pattern` (no zoom expression), with image registration/`styleimagemissing` handling and paint-property clearing in `WorldMap.tsx`. Fully unit-tested (11 tests). See [IDEAS_WORK_LOG.md](IDEAS_WORK_LOG.md) for the full implementation record.
@@ -50,7 +48,6 @@ Only redistributing window boxes cannot meet coverage when there are more walls 
 
 **What stays useful regardless of the rejected renderer choice:** `createFacadePattern`'s pure texture generation is unused now, but the surrounding wiring this session added is not wasted — `isNight()` (shared day/night boundary, now used by both pane lighting and pattern selection), the `config.palette`/`config.hour` dependency-array fixes in `WorldMap.tsx`'s collection effect, and the imperative style patcher's new "clear removed paint properties" behavior are all independently correct fixes worth keeping.
 
->>>>>>> 4dcb661d1c4a46e89f16b35e09b06153269cfa88
 ## F1: Prove and integrate base coverage
 
 **Files:** Create `src/world/facade-pattern.ts`, `tests/facade-pattern.test.ts`, and `tests/browser/facades.mjs`; modify `src/world/style.ts`, `src/world/WorldMap.tsx`, and `tests/world.test.ts`.

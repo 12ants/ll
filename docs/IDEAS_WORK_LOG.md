@@ -26,8 +26,6 @@
 
 **Next action:** Begin Z1 from the [todo list](IDEAS_TODO.md), then Z2. Implementation has not started.
 
-<<<<<<< HEAD
-=======
 ## 2026-09-11 — Z1 complete: shared physical dimensions and road appearance
 
 **Task:** [Z1](ZOOM_STABILITY_PLAN.md#z1-establish-one-dimension-and-appearance-policy) from the [todo list](IDEAS_TODO.md).
@@ -1360,7 +1358,90 @@ or take on the larger, undesigned effort of fragment-aware bridge stitching (dis
 bridge-fragment-to-bridge-fragment join, which should get a wider radius, from an
 approach-edge's own two endpoints, which must not) as its own scoped task before touching B3.
 
->>>>>>> 4dcb661d1c4a46e89f16b35e09b06153269cfa88
+## 2026-09-12 — Data-corruption bug found and fixed: NUL bytes standing in for spaces
+
+**Task:** none directly — found while investigating why `origin/main` looked broken after a
+local merge of PR #6 (see the two entries below). Recorded separately since it's a real,
+pre-existing source bug independent of the merge.
+
+**What was found:** `src/world/feature-cache.ts` (`featureKey`, `entityIdentity`) and
+`tests/fixtures/bridge-network.ts` (`roadFeature`'s `key` field) each build a composite string
+key with a template literal that visually reads `` `${a} ${b} ${c}` `` in every editor, diff
+view, and this session's own prior `Read` tool calls — but a byte-level scan (`python3` reading
+the file in binary mode; ordinary `grep`/bash `$'\x00'` patterns are unreliable here since bash
+strips NUL from its own argument vectors) showed the separator was an actual `0x00` byte in the
+committed file, not `0x20` (space), in all 5 occurrences in the first file and all 3 in the
+second. This is invisible to every tool that renders or diffs text normally, and invisible to
+every existing test, since `tests/feature-cache.test.ts` only ever compares
+`featureKey(...)` against another `featureKey(...)` call — never against a literal string
+containing the separator. The corruption predates this session (confirmed present in the very
+first commit made from this worktree, `ff55b1e`, meaning it was already on disk when
+`feature-cache.ts` was authored in an earlier session) and did not previously cause a visible
+failure because Z2 (which would consume `featureKey`) has zero call sites — it has never run
+against real data.
+
+**Fix:** replaced the NUL bytes with literal space characters (`0x20`) in both files, matching
+what the source visibly reads as and evidently was always intended to be. Added a regression
+test to `tests/feature-cache.test.ts` ("joins its parts with literal ASCII spaces, not control
+characters") asserting the key splits into exactly 4 space-separated parts and every character
+code is >= `0x20`, so this exact invisible-corruption class can't reappear undetected.
+
+**Commands/results:** `pnpm exec vitest run` — 99/99 passed (98 + 1 new). `pnpm exec tsc -b` —
+clean.
+
+**Not investigated further:** how the corruption was introduced (a prior session's tool
+pipeline, an editor, or a copy/paste step) — worth a mental note for future sessions writing
+files with composite string keys, but not reproduced or root-caused here.
+
+## 2026-09-12 — `origin/main` found with unresolved merge-conflict markers after local merge
+
+**Context:** after PR #6 was merged and pushed, `origin/main` advanced further with two more
+commits made directly by the user, outside this session: `0e510ba` ("aaaa", adding an earlier/
+stale draft of the same docs files this session's PR also touched) and `3b026ce`, a merge
+commit reconciling `0e510ba` with this session's PR (`4dcb661`). That merge was not actually
+finished: it left literal, uncommitted-looking but **actually committed**
+`<<<<<<<`/`=======`/`>>>>>>>` conflict markers directly in three tracked files, plus five
+leftover merge-tool backup files.
+
+**Found via `git grep -n -E '^(<{7}|={7}|>{7})( |$)' origin/main` (the same pattern the repo's
+own `scripts/check-merge-markers.sh` uses, run directly against the remote tree since the
+local worktree here is on a different branch):**
+- `docs/FACADE_COVERAGE_PLAN.md` (lines 34-53) and its own conflicted duplicate,
+  `docs/FACADE_COVERAGE_PLAN.md.orig`
+- `docs/IDEAS_TODO.md` (lines 36-140) and its own conflicted duplicate,
+  `docs/IDEAS_TODO_BACKUP_59239.md`
+- `docs/IDEAS_WORK_LOG.md` (lines 29-1363)
+- Additional stray artifact files with no markers of their own but no reason to exist in
+  history: `docs/IDEAS_TODO_BASE_59239.md` (empty), `docs/IDEAS_TODO_LOCAL_59239.md`,
+  `docs/IDEAS_TODO_REMOTE_59239.md`
+
+**Inspected each conflict by hand before resolving anything** (`git show origin/main:<path>`):
+in every case, the `HEAD` side (`0e510ba`) is a stale, less-detailed skeleton draft of the exact
+same section this session's PR (`4dcb661`, the `=======`-to-`>>>>>>>` side) already wrote in
+full, measured detail — e.g. `IDEAS_TODO.md`'s `HEAD` side is nine one-line unchecked
+checkboxes with no detail, while the PR side is the fully-annotated version with every
+measured B1/B2/B3 finding this worktree's sessions produced. No case required merging content
+from both sides; the PR side is a strict superset. Resolution: keep the PR side entirely,
+delete the `HEAD` side and all five stray artifact files.
+
+**Also found, unrelated to the conflict markers but in the same investigation:** `git diff` on
+`src/world/feature-cache.ts` between the merge's two parents reported `Binary files differ`.
+This turned out to be the pre-existing NUL-byte corruption above (already present in `4dcb661`,
+predating the merge) — git's binary-file heuristic tripped on the embedded NUL bytes. Not a
+merge-introduced problem; see the entry above for the actual fix, applied on this worktree's
+branch and included in the cleanup PR below so `main` picks it up too.
+
+**Fix:** prepared on a new branch off `origin/main` (not on `worktree-zoom-stability-z1`, and
+not pushed to `main` directly — this session cannot push to `main`, by design). Resolved the
+three conflicted files by taking the PR side verbatim, deleted the five stray artifact files,
+applied the same NUL-byte fix as above, ran `scripts/check-merge-markers.sh`, the full test
+suite and `tsc -b`, then opened a PR for the user to review and merge themselves.
+
+**Next action — for the user:** merge the cleanup PR before trusting `main`'s docs or building
+anything else on top of it. This session's own B3-live-wiring work (next up) will build on
+`worktree-zoom-stability-z1` / this cleanup branch's corrected state, not on the currently
+broken `origin/main`.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.
