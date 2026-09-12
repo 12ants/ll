@@ -1,7 +1,8 @@
 import type { Map, MapGeoJSONFeature } from "maplibre-gl";
 import type { Position } from "geojson";
-import { hashString, localMeters, seeded, insidePolygon } from "./geography";
+import { hashString, isNight, localMeters, seeded, insidePolygon } from "./geography";
 import { type WorldConfig } from "./config";
+import { isMajorRoadClass, roadColor, roadDimensions } from "./road-model";
 export interface StructurePart {
   position: [number, number, number];
   scale: [number, number, number];
@@ -76,7 +77,7 @@ export function collectStructures(
       : 0;
     const hash = hashString(JSON.stringify(ring)),
       tone = seeded(hash),
-      lit = c.hour < 7 || c.hour >= 18;
+      lit = isNight(c.hour);
     // Each building picks one matched [pane, ground floor, lit] trio from its footprint
     // hash, so buildings read as visibly distinct structures instead of two shades
     // repeating across the whole scene.
@@ -177,25 +178,10 @@ export function collectBridgeParts(
         : f.geometry.type === "MultiLineString"
           ? f.geometry.coordinates
           : [];
-    const major = ["motorway", "trunk", "primary"].includes(
-      f.properties.class,
-    );
-    const width = ["path", "track"].includes(f.properties.class)
-      ? 3
-      : major
-        ? 14
-        : 8;
-    const deckThickness = ["path", "track"].includes(f.properties.class)
-      ? 0.5
-      : major
-        ? 1.1
-        : 0.8;
-    // Echo the flat map's class-based road-surface tone on the deck for continuity.
-    const deckColor = ["path", "track"].includes(f.properties.class)
-      ? "#c7b796"
-      : major
-        ? "#a19c8d"
-        : "#b0afa1";
+    const major = isMajorRoadClass(f.properties.class);
+    const { width, deckThickness } = roadDimensions(f.properties);
+    // Same surface-color policy and palette as the flat map's road layer.
+    const deckColor = roadColor(f.properties, c.palette);
     // Small, capped clearance above the road grade — not an absolute height, since
     // OSM's `layer` tag is only a relative stacking hint.
     const layer = Math.max(0, Number(f.properties.layer) || 0);

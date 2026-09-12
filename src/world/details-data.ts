@@ -13,6 +13,7 @@ import {
   localMeters,
 } from "./geography";
 import { QUALITY, type WorldConfig } from "./config";
+import { roadDimensions, VEGETATION_SETBACK } from "./road-model";
 export interface Detail {
   position: [number, number, number];
   scale: number;
@@ -85,20 +86,16 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
           : f.geometry.type === "MultiLineString"
             ? f.geometry.coordinates
             : [];
-      const width = ["path", "track"].includes(f.properties.class)
-        ? 3
-        : ["motorway", "trunk", "primary", "secondary"].includes(
-              f.properties.class,
-            )
-          ? 10
-          : 6;
+      // Exclusion radius, not full carriageway width: half the road plus a
+      // vegetation setback beyond its edge.
+      const radius = roadDimensions(f.properties).width / 2 + VEGETATION_SETBACK;
       return lines.flatMap((line) =>
         line
           .slice(1)
           .map((p, i) => ({
             a: localMeters(line[i], origin),
             b: localMeters(p, origin),
-            width,
+            radius,
           })),
       );
     });
@@ -162,12 +159,12 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
         )
           continue;
         if (
-          roads.some(({ a, b, width }) => {
+          roads.some(({ a, b, radius }) => {
             if (
-              pos[0] < Math.min(a[0], b[0]) - width ||
-              pos[0] > Math.max(a[0], b[0]) + width ||
-              pos[2] < Math.min(a[2], b[2]) - width ||
-              pos[2] > Math.max(a[2], b[2]) + width
+              pos[0] < Math.min(a[0], b[0]) - radius ||
+              pos[0] > Math.max(a[0], b[0]) + radius ||
+              pos[2] < Math.min(a[2], b[2]) - radius ||
+              pos[2] > Math.max(a[2], b[2]) + radius
             )
               return false;
             const dx = b[0] - a[0],
@@ -183,7 +180,8 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
                 )
               : 0;
             return (
-              Math.hypot(pos[0] - a[0] - t * dx, pos[2] - a[2] - t * dz) < width
+              Math.hypot(pos[0] - a[0] - t * dx, pos[2] - a[2] - t * dz) <
+              radius
             );
           })
         )

@@ -6,6 +6,12 @@ import type {
 } from "maplibre-gl";
 import { PALETTES, daylight, mixHex, type WorldConfig } from "./config";
 import { ROAD_CLASSES } from "./geography";
+import {
+  MAJOR_ROAD_CLASSES,
+  MAJOR_SURFACE_COLOR,
+  PATH_SURFACE_COLOR,
+  PEDESTRIAN_SURFACE_COLOR,
+} from "./road-model";
 export const VECTOR_URL =
   import.meta.env.VITE_VECTOR_TILEJSON ||
   "https://tiles.openfreemap.org/planet";
@@ -56,17 +62,18 @@ export function createWorldStyle(c: WorldConfig): StyleSpecification {
     SURFACE_FILTER,
     ["==", ["get", "brunnel"], "bridge"],
   ];
-  const majorClasses = ["motorway", "trunk", "primary"];
-  // Class-based surface tone: asphalt for major roads, dirt for trails, pavers for pedestrian ways.
+  const majorClasses = MAJOR_ROAD_CLASSES;
+  // Class-based surface tone: asphalt for major roads, dirt for trails, pavers for
+  // pedestrian ways. Same policy as road-model's roadColor(), used for 3D bridge decks.
   const roadSurface: ExpressionSpecification = [
     "match",
     ["get", "class"],
     ["motorway", "trunk"],
-    "#8f897c",
+    MAJOR_SURFACE_COLOR,
     ["path", "track"],
-    "#c7b796",
+    PATH_SURFACE_COLOR,
     ["pedestrian", "living_street"],
-    "#d6cfba",
+    PEDESTRIAN_SURFACE_COLOR,
     p.road,
   ];
   const width: ExpressionSpecification = [
