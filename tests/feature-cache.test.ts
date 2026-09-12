@@ -45,6 +45,19 @@ function worldFeature(
 }
 
 describe("featureKey identity", () => {
+  it("joins its parts with literal ASCII spaces, not control characters", () => {
+    // Regression: the committed source once had NUL bytes (0x00) sitting
+    // where these space characters visually appear — invisible in every
+    // editor/diff view, undetected by every other test here since they only
+    // ever compare featureKey(...) against another featureKey(...) call,
+    // never against a literal string. Caught 2026-09-12 via a byte-level
+    // scan after an unrelated main-branch merge investigation.
+    const key = featureKey("world", "transportation", lineFeature([[10, 20], [11, 21]], "abc"));
+    expect(key.split(" ")).toHaveLength(4);
+    expect(key).toMatch(/^world transportation abc \d+$/);
+    for (let i = 0; i < key.length; i++) expect(key.charCodeAt(i)).toBeGreaterThanOrEqual(0x20);
+  });
+
   it("is unaffected by line direction (reversed lines)", () => {
     const forward = lineFeature([
       [10, 20],
