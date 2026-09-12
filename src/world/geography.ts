@@ -90,4 +90,13 @@ export function localMeters(
   ];
 }
 
+/** Inverse of localMeters's [x, z] plane: recovers lng/lat from a camera-relative local point. */
+export function metersToPosition(local: readonly [number, number], origin: Position): Position {
+  return [
+    origin[0] + local[0] / (111320 * Math.cos((origin[1] * Math.PI) / 180)),
+    origin[1] - local[1] / 111320,
+  ];
+}
 export function wrapLongitude(longitude:number) { return ((longitude+180)%360+360)%360-180 }
+/** Shared day/night boundary for facade pane and pattern lighting. */
+export function isNight(hour: number) { return hour < 7 || hour >= 18 }

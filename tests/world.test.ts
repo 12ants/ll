@@ -7,6 +7,7 @@ import {
   scatterPolygon,
 } from "../src/world/geography";
 import { createWorldStyle } from "../src/world/style";
+import { roadColor } from "../src/world/road-model";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 
 describe("world configuration boundary", () => {
@@ -88,4 +89,23 @@ it("produces a valid style containing no symbol or route layers", () => {
     style.layers.some((l) => /label|ferry|tunnel|boundary/.test(l.id)),
   ).toBe(false);
   expect(style.layers.some((l) => l.type === "fill-extrusion")).toBe(true);
+});
+it("shares the road-model surface-color policy between the flat road layer and 3D decks", () => {
+  const style = createWorldStyle(DEFAULT_CONFIG);
+  const roads = style.layers.find((l) => l.id === "roads");
+  const lineColor = (roads as { paint: { "line-color": unknown[] } }).paint[
+    "line-color"
+  ];
+  expect(lineColor).toContain(
+    roadColor({ class: "motorway" }, DEFAULT_CONFIG.palette),
+  );
+  expect(lineColor).toContain(
+    roadColor({ class: "path" }, DEFAULT_CONFIG.palette),
+  );
+  expect(lineColor).toContain(
+    roadColor({ class: "pedestrian" }, DEFAULT_CONFIG.palette),
+  );
+  expect(lineColor[lineColor.length - 1]).toBe(
+    roadColor({ class: "residential" }, DEFAULT_CONFIG.palette),
+  );
 });
