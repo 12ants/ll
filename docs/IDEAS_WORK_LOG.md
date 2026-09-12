@@ -26,8 +26,6 @@
 
 **Next action:** Begin Z1 from the [todo list](IDEAS_TODO.md), then Z2. Implementation has not started.
 
-<<<<<<< HEAD
-=======
 ## 2026-09-11 — Z1 complete: shared physical dimensions and road appearance
 
 **Task:** [Z1](ZOOM_STABILITY_PLAN.md#z1-establish-one-dimension-and-appearance-policy) from the [todo list](IDEAS_TODO.md).
@@ -1360,7 +1358,6 @@ or take on the larger, undesigned effort of fragment-aware bridge stitching (dis
 bridge-fragment-to-bridge-fragment join, which should get a wider radius, from an
 approach-edge's own two endpoints, which must not) as its own scoped task before touching B3.
 
->>>>>>> 4dcb661d1c4a46e89f16b35e09b06153269cfa88
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.
