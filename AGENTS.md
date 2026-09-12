@@ -7,6 +7,8 @@
 - `pnpm build` — **Runs `tsc -b` first, then `vite build`.** A type error fails the build before bundling.
 - `pnpm preview` — serve production bundle.
 - `pnpm test:browser` — Playwright against the dev server. Install Chromium once with `pnpm exec playwright install chromium`. Needs `pnpm dev` in another terminal. Slow; uses real public tiles and software WebGL. Writes captures to `.artifacts/`.
+- `pnpm test:browser:bridges` — the B1-B5 bridge suite (`tests/browser/bridges.mjs`).
+- `pnpm tiles` + `pnpm dev:offline` — run the browser suites **offline** against the committed tile fixtures in `tests/fixtures/tiles/` (z11-z14, ~20 MB). Start `pnpm tiles` and `pnpm dev:offline` in two terminals, then the browser script in a third. Faster and deterministic. Coverage, measured: `bridges.mjs` passes **all 9 checks** offline; `world.mjs` passes its first 7 and then fails at the Chamonix step, which needs a real DEM — no DEM tiles are committed. See `tests/fixtures/tiles/README.md`.
 
 ## Architecture (what an agent will miss from filenames alone)
 
@@ -27,7 +29,8 @@
 - **`queryTerrainElevation` is only called when `terrain` is true.** Adding terrain sampling to bridge code requires guarding against the MapLibre method being unavailable or expensive when terrain is disabled.
 - **Performance budgets are enforced in code, not just docs.** Quality tiers (Eco / Balanced / High) cap pixel ratio, tree count, facade parts, and scatter radius. Changes to detail generation must respect these caps.
 - **No API key required.** Default tile sources (`OpenFreeMap` + `Mapterhorn`) are public. Override via `.env.local` with `VITE_VECTOR_TILEJSON` and `VITE_DEM_TILEJSON` if needed.
-- **Browser tests require internet.** They load real vector tiles and DEM. They will fail or timeout offline.
+- **Browser tests need internet only in live mode.** `pnpm test:browser` loads real vector tiles and DEM and will fail or timeout offline. The fixture path (`pnpm tiles` + `pnpm dev:offline`) needs no network at all — but it covers only z11-z14 for the three terrain-off cities `bridges.mjs` visits, so **terrain-on presets (San Francisco, Chamonix) still require live tiles**, and `world.mjs`'s Chamonix check therefore only passes live.
+- **The TileJSON request is preloaded from `index.html`.** `vite.config.ts`'s `tilePreload` plugin injects `<link rel="preconnect">` and `<link rel="preload" as="fetch">` for the resolved vector TileJSON. MapLibre cannot request a single tile until that resolves, so this moves it off the critical path — measured against the dev server, the request starts at ~40 ms (initiator `link`) instead of ~1080 ms (initiator `fetch`), and it is still fetched exactly once. The plugin reads the same `VITE_VECTOR_TILEJSON` override `style.ts` does, so pointing the app at the fixture server does not leave a preload aimed at the public host — keep those two resolutions in sync if either changes.
 
 ## File ownership (avoid guessing entrypoints)
 

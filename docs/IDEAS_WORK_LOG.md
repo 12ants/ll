@@ -2027,6 +2027,103 @@ through its own documented `.env.local` `VITE_VECTOR_TILEJSON`/`VITE_DEM_TILEJSO
 zoom/bearing/pitch/DPR/terrain/city matrix, and terrain-on (San Francisco/Chamonix) live-browser
 coverage, which still has none.
 
+## 2026-09-12 — Tile preloading and committed offline tile fixtures
+
+**Status:** done. Requested directly (not from the plans in this folder): preload map tiles for
+faster load, and commit some tiles for faster testing.
+
+**Changed files:**
+- `vite.config.ts` — new `tilePreload` plugin injecting `<link rel="preconnect">` and
+  `<link rel="preload" as="fetch">` for the resolved vector TileJSON. It resolves that URL through
+  the same `VITE_VECTOR_TILEJSON` override `style.ts` reads, so pointing the app at a local fixture
+  server does not leave a preload aimed at the public host.
+- `tests/fixtures/tiles/` — committed vector tiles (z11-z14, 123 tiles, **20 MB**) plus the
+  upstream `planet`/`dem` TileJSON documents, with a `README.md` covering provenance, coverage,
+  re-capture and ODbL attribution.
+- `tests/browser/tile-server.mjs` — serves those fixtures over plain HTTP.
+- `tests/browser/capture-tiles.mjs` — re-records the fixture tree by standing in for the server
+  and forwarding upstream, so a capture is exactly what the suite asks for.
+- `package.json` — `tiles`, `dev:offline`, `test:browser:bridges` scripts.
+- `tests/browser/world.mjs` — **two pre-existing failures found and fixed** (see below), plus the
+  same `PW_CHROMIUM`/`PW_PROXY` launch overrides added to `bridges.mjs`.
+- `AGENTS.md` — the "Browser tests require internet" gotcha was made wrong by this work and is
+  now corrected (live mode still needs it; the fixture path does not, but covers only the three
+  terrain-off cities at z11-z14), plus the preload invariant.
+
+**Preload — measured, and what the measurement does and does not show.** Same dev server, same
+page, with and without the injected tags (throwaway `NO_PRELOAD` toggle, reverted after use):
+
+| | TileJSON request starts | initiator | `/planet` requests |
+| --- | --- | --- | --- |
+| without preload | +1081 ms | `fetch` (MapLibre, after bundle parse and map construction) | 1 |
+| with preload | +39 ms | `link` (the preload tag) | 1 |
+
+So the request moves ~1.04 s earlier on the critical path and is still fetched exactly **once** —
+the preload is reused by MapLibre's own fetch rather than duplicating it, which is the thing worth
+verifying, since a mismatched `crossorigin`/`as` would silently double-fetch instead.
+
+**Explicitly NOT claimed: an end-to-end speedup number.** Time to "World is live" measured
+14.1 s with vs 13.5 s without — noise, not a regression and not a win. That is expected and is a
+limitation of where this was measured, not evidence about the change: the only saving this
+optimisation can produce is the TileJSON round-trip latency, and in this container every
+measurement had to run against a local tile server (~0 ms round trip) because headless Chromium
+cannot complete a TLS handshake through the session's egress proxy. Against a real remote tile
+host the saving is that host's round trip; nobody has measured it, and this log should not be read
+as if somebody had.
+
+**Fixture scope, and one real trade-off decision.** The fixture set started as "every tile one
+full live run requested" (141 tiles, 22 MB), but the offline run then asked for low-zoom parent
+tiles the live run never had. Chasing those to zero converged badly — each round added another
+world-overview level at 3+ MB — so z10 and below are deliberately excluded: MapLibre requests them
+opportunistically, no assertion depends on them, and the suite passes without them. To keep that
+from silently masking real drift, `tile-server.mjs` derives its covered zoom range from the fixture
+directories and warns only for misses *inside* it; misses below are silent and expected. The
+committed set now serves the full suite with **0 in-range misses**. Getting there took three
+backfill rounds, because which parent tiles MapLibre asks for varies slightly run to run with
+tile-load ordering; a future run may still surface a handful of new in-range misses, which is
+what the warning is for and does not affect any assertion (every miss is an empty tile, and the
+suite passed at every stage of the backfill).
+
+**Commands/results:**
+- `pnpm test` — **144/144** (12 files), unchanged.
+- `pnpm build` (`tsc -b` + `vite build`) — clean; only the pre-existing chunk-size warning.
+  Production `dist/index.html` carries both tags pointing at `https://tiles.openfreemap.org`.
+- `node tests/browser/bridges.mjs` against the fixture server with **no network at all** — all
+  9 checks pass, `travel baseline: {"Gamla Stan":14,"Manhattan":62}`, 0 in-range fixture misses.
+  Same suite against live tiles also passes (run earlier this session).
+
+**Two pre-existing failures in the default browser suite (`world.mjs`), found while validating the
+fixture path and fixed.** Both were confirmed against **live** tiles before being touched, so
+neither is attributable to the fixtures:
+1. *"zero tree density preserves the three amenity meshes"* asserted a fixed total of 4 instanced
+   meshes. It has been failing with 5 since B4's bridge piers started publishing a cylinder
+   structure mesh, which exists or not depending on whether the current camera (a Manhattan jump,
+   a few steps earlier) has published piers — nothing to do with tree density. Now asserted as a
+   delta: exactly the two tree meshes unmount, everything else survives.
+2. The final *"initialization data failures expose a reload action"* check routed
+   `https://tiles.openfreemap.org/**` to `abort()`. That is a hardcoded copy of an overridable URL,
+   so it silently matched nothing whenever the app was pointed elsewhere, and the expected error
+   state never appeared. Now the blocked origin is read off the running style's own `world` source.
+   (This one only misfires under an override, so it was passing live before this session — it is
+   fixed because the fixture path is exactly such an override, not because it was red.)
+`world.mjs` now passes all 9 checks against live tiles.
+
+**Fixture coverage, measured rather than assumed:** offline, `bridges.mjs` passes all 9 checks with
+0 in-range misses; `world.mjs` passes its first 7 and then fails at the Chamonix step, which
+asserts a real elevation above 500 m. That is the documented limit of this fixture set, not a
+regression.
+
+**Not done, named:** no DEM tiles are committed, so the terrain-on presets (San Francisco,
+Chamonix) still require live Mapterhorn tiles — B5's terrain-on live-browser gap is unchanged by
+this work. Prefetching the other `PLACES` presets was considered and rejected for now: it spends
+bandwidth on a donated public service for cities most sessions never open; if instant city
+switching is wanted, gate it on opening the place switcher rather than on page load.
+
+**Next action:** unchanged from the entry above — B5's remaining matrix and terrain-on coverage.
+The fixture harness is the natural base for the matrix work, since it makes repeated
+zoom/bearing/pitch runs fast and deterministic; extending it to terrain would mean committing DEM
+tiles for one terrain-on city.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

@@ -9,6 +9,13 @@ const expect = playwrightExpect.configure({ timeout: 60000 });
 const browser = await chromium.launch({
   headless: true,
   args: ['--no-sandbox', '--enable-unsafe-swiftshader'],
+  // Sandboxed CI/remote containers: PW_CHROMIUM points at a preinstalled
+  // browser, PW_PROXY at an egress proxy the tile hosts are only reachable
+  // through. Both unset locally, where the defaults already work.
+  ...(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}),
+  ...(process.env.PW_PROXY
+    ? { proxy: { server: process.env.PW_PROXY, bypass: 'localhost,127.0.0.1' } }
+    : {}),
 });
 const page = await browser.newPage({
   viewport: { width: 800, height: 600 }, deviceScaleFactor: 2,
@@ -112,10 +119,17 @@ try {
 
   await page.getByRole('tab', { name: 'World', exact: true }).click();
   const density = page.getByRole('slider', { name: 'Tree density', exact: true });
+  const meshesBefore = (await state()).instances.length;
   await density.press('Home');
   await expect(page.locator('.statusbar')).toContainText('0 trees', { timeout: 30000 });
-  await expect.poll(async () => (await state()).instances.length).toBe(4);
-  console.log('PASS: zero tree density preserves the three amenity meshes');
+  // Exactly the two tree meshes (canopy and trunk) unmount; every other
+  // instanced mesh survives. Counted as a delta rather than against a fixed
+  // total, because the total also includes the structure meshes, and whether
+  // the cylinder one exists depends on whether the current camera has any
+  // published bridge piers -- which is camera and map-data dependent, and is
+  // not what this check is about.
+  await expect.poll(async () => (await state()).instances.length).toBe(meshesBefore - 2);
+  console.log('PASS: zero tree density unmounts only the tree meshes, amenities survive');
 
   const capturePromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Capture world', exact: true }).click();
@@ -144,7 +158,14 @@ try {
   assert.deepEqual(errors, []);
   console.log('PASS: Alpine preset loads real elevation and clears distant details');
 
-  await page.route('https://tiles.openfreemap.org/**', route => route.abort());
+  // Block the vector source the app is actually configured with, read off the
+  // running style rather than hardcoded -- the tile host is overridable via
+  // VITE_VECTOR_TILEJSON, and a hardcoded public URL silently matches nothing
+  // when the app is pointed at the offline fixture server.
+  const vectorOrigin = await page.evaluate(
+    () => new URL(window.verificationRoot.store.getState().r3m.map.getStyle().sources.world.url).origin,
+  );
+  await page.route(`${vectorOrigin}/**`, route => route.abort());
   await page.reload();
   await expect(page.locator('.data-error')).toBeVisible();
   // MapLibre can emit load after a source error; the recovery action must

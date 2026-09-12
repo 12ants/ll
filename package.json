@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "dev:offline": "VITE_VECTOR_TILEJSON=http://127.0.0.1:8099/planet VITE_DEM_TILEJSON=http://127.0.0.1:8099/dem vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:browser": "node tests/browser/world.mjs"
+    "test:browser": "node tests/browser/world.mjs",
+    "tiles": "node tests/browser/tile-server.mjs",
+    "test:browser:bridges": "node tests/browser/bridges.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
