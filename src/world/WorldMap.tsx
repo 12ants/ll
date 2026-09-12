@@ -119,6 +119,8 @@ function WorldMapView({ config, profile, orbit, onReady, onStatus }: Props) {
     config.variation,
     config.roads,
     config.bridges,
+    config.palette,
+    config.hour,
   ]);
   useEffect(() => {
     const map = ref.current?.getMap();
