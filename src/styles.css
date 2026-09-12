@@ -1362,3 +1362,129 @@ p {
   margin: 4px 0 0;
   font-variant-numeric: tabular-nums;
 }
+
+
+
+
+/*  */
+
+ll.css
+.world-canvas {
+  position: absolute;
+  inset: 64px 0 34px;
+  background: linear-gradient(#49ccc6, #d5d6c7);
+  height: 100vh;
+  max-height: ;
+  z-index: 2;
+  top: 0;
+}
+.statusbar {
+ 
+}
+html,#root,body{
+ height: 100dvh;
+ max-height: 100dvh;
+ font: 400 12px monospace;
+color: #000000!important;}
+.toast {
+ top:12px;
+}
+.topbar,.statusbar,.status-coords span{
+  color: #000000!important;
+ text-shadow: 0 0 5px #ffffff,
+  1px 0px 0px #fffae6!important;
+}
+.topbar,.statusbar {
+  position: absolute;
+  z-index: 99;
+  top: ;
+  padding: 5px!important;
+  left: 0;
+  right: 0;
+  height: ;
+  background: #ffffff66;
+  display: flex;
+
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 25px;
+  border-bottom: 1px dashed #dfe3d7bb;
+  border-top: : 1px dashed #dfe3d7bb;
+}
+
+.orbit-button 
+,.tool-group,
+.place-trigger{
+  display: ;
+  align-items: ;
+  gap: 12px;
+  background: #ffffffcc;
+  padding: 2px;
+  border: 1px solid #e6e9ff;
+  border-radius: 0px;
+  min-width: ;
+ opacity: 1;
+  box-shadow: 1px 1px,2px 2px,3px 3px,4px 4px;
+  text-align: left;
+  z-index:94;
+}
+.value-caption span {
+ 
+}
+ 
+
+
+.inspector {
+  position: absolute;
+  z-index: 195;
+  top: 86px;
+  right: 24px;
+  bottom: 58px;
+  padding: 2px;
+  width: 296px;
+  background: #ffffff88;
+  border: 1px solid #e2e5da;
+  border-radius: 1px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow-y: scroll;
+}
+
+h2, span {
+  font: 400 8px monospace;
+  letter-spacing: 0;
+  margin-top: 0;
+  font-size: 8px;
+  margin: 0  5px  0 0;
+  font-weight: 400;
+}
+.inspector > div:not(.inspector-heading) {
+
+padding:2px;
+background:#FFF;
+}
+.inspector ::-webkit-scrollbar {
+width:8px;
+background:#ffffff66;
+outline: 0px dashed #ffffff88;
+  }
+ .inspector div  {background: #ffffffcc;
+  padding:2px;
+  }
+  .section {
+   padding: 0;margin: 02px;
+  }
+ .inspector ::-webkit-scrollbar-thumb {
+background:#b4b4b488;
+  }
+
+
+/* .button{width: 12px;height: 12px} */
+  .inspector-heading {
+  padding: 0;
+  display: flex;
+  font-family: monospace;
+  justify-content: flex-end;
+  overflow:;height: ;
+}
