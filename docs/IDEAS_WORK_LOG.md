@@ -1770,6 +1770,171 @@ verification) is the next task with no unresolved prerequisite gap for the bridg
 publish, and would also be the natural place to get a real, unambiguous pier screenshot as part
 of its own required multi-city/zoom/bearing screenshot matrix rather than as an ad hoc diagnostic.
 
+## 2026-09-12 — B5: acceptance suite built and run; a real cross-city mesh-retention bug found, not fixed
+
+**Task:** [B5](BRIDGE_CONNECTIVITY_PLAN.md#b5-verify-connectivity-and-publish-measured-evidence) from
+the [todo list](IDEAS_TODO.md) — the last item in the Bridge Connectivity sequence, picked up
+directly ("continue work") since B4's own last entry named it as the next task with no
+unresolved prerequisite gap.
+
+**Scope decision, stated up front (same discipline as every B1-B4 session):** the plan's own B5
+text describes a full acceptance matrix (12 zoom values x 4 bearings x 3 pitches x 2 DPR x 2
+terrain states x 3 cities, plus a deterministic fixture suite covering 8+ named shapes). That
+matrix alone is larger than any single prior session's scope in this log. What was actually run:
+every fully-automatable, offline piece of the plan (deterministic fixtures, the sampled-position
+continuity walk, `pnpm test`/`pnpm build`), plus a *targeted* real-browser pass (one city driven
+through several real interaction checks, a second city as a cross-city sanity pass only) rather
+than the full grid. This mirrors the reduction Z3/B1-B4 each made and named explicitly.
+
+**Built and run — `tests/bridge-acceptance.test.ts` (new, 17 tests), fully offline:**
+- Full-pipeline fixtures through `collectDetails()` (the actual production entry point, not a
+  reimplementation) for every shape the plan names: straight, curved (interior bend), diagonal
+  (non-axis-aligned), short deck (below the 12m pier gate — publishes with posts, no piers), short
+  approach (infeasible, box-generator fallback), a Y-branch junction far enough past the deck end
+  to be accepted, tile-split fragments (two features sharing an interior endpoint, re-joined by B1
+  before B2 ever sees them), a ground road crossing underneath with no shared endpoint ("stacked"
+  grade separation — never connects, never perturbs the bridge), missing DEM under the span
+  (`terrain: true` + a `queryTerrainElevation` that returns `null` — reports incomplete, not
+  ground-zero), and budget saturation (40 simultaneous ready bridges under the Eco tier's
+  10k-triangle cap — every deck publishes, some rails drop, none exceed the 500-instance
+  post+pier cap).
+- Sampled-position continuity walk, directly against `solveBridge`'s own `ProfileSample`s (not a
+  black-box mesh inspection): for straight/curved/diagonal/short-deck fixtures, asserts every
+  sample-to-sample height step respects the configured max grade, and both approach endpoints
+  settle within 0.02m of true ground — the plan's own literal tolerance. A pure per-post check
+  confirms every railing post (kind `"box"`) sits at or outside the deck's own half-width, i.e.
+  never inside the travel corridor; piers (kind `"cylinder"`) are excluded from that specific
+  check by design, since they're centerline supports *under* the deck, not on the travel surface
+  — an initial version of this test wrongly applied the edge-clearance check to piers too and
+  failed on two genuine, correct pier placements before this was caught and fixed.
+- A dedicated unequal-endpoint-height fixture (ground ramping 0m to 5m under the span): confirms
+  each side sizes its own independent transition and both settle within 0.02m of real ground.
+- The plan's own "terrain off/on and exaggeration 1/1.2/2" line, addressed honestly rather than
+  literally: `BRIDGE_RENDERING_PLAN.md` already established that `queryTerrainElevation()` bakes
+  MapLibre's active exaggeration into its return value before any of this codebase's own code
+  sees it — there is no exaggeration constant inside `bridge-profile.ts` to vary offline. What
+  *is* tested: feeding `sampleGround` a value pre-scaled by 1x/1.2x/2x (simulating what a
+  different exaggeration would hand our code) and confirming the solved deck height tracks it
+  linearly with no double-application — a regression guard against a future contributor adding a
+  second, redundant scale factor inside this codebase.
+- A quality-tier fixture confirming Eco/Balanced/High never change the *deck* geometry itself
+  (byte-identical positions/indices across tiers) — only the rail/post/pier budget differs, per
+  the plan's own "budgets, not geometry" intent.
+
+**Commands/results:** `pnpm exec vitest run tests/bridge-acceptance.test.ts` — 17/17 (one real bug
+in the test itself, not the app, was caught and fixed before this: the corridor-clearance
+assertion above). Full `pnpm exec vitest run` — **144/144** (127 baseline + 17 new). `pnpm exec
+tsc -b` — clean. `pnpm build` — clean, no new warnings.
+
+**Built and run — `tests/browser/bridges.mjs` (new), against real OpenFreeMap/Mapterhorn tiles via
+`pnpm dev`:** Gamla Stan (default preset, terrain off, the only city with a previously-measured
+9/76 ready count) driven through: initial publish check, the Bridges on/off/on toggle (no stale
+elevated mesh survives hiding, clean republish on restore), a continuous zoom sweep crossing the
+13.5 live/hidden threshold seven times, a tile-boundary pan and back, an orbit start/stop, a full
+page reload, and close-up screenshots of a *located* real published bridge (found by its own mesh
+geometry — nearest published deck to the camera center, converted back to lng/lat via
+`geography.ts`'s exact local-meters formula — never a guessed coordinate) from the top and three
+bearings. Amsterdam was loaded as a second terrain-off preset for cross-city sanity only (bridge
+presence not asserted, stated as such in the script's own output) — 4 bridge meshes happened to
+publish there too. All 9 checks passed. Screenshots in `.artifacts/bridges/` (gitignored):
+`gamla-stan-overview.png`, `gamla-stan-bridge-top.png`, `gamla-stan-bridge-bearing{20,110,200,290}.png`,
+`amsterdam-overview.png`. The bearing-290 shot is an unambiguous, unobstructed side view of a
+published bridge with continuous ramps, visible piers and evenly-spaced rail posts over water —
+the clean pier shot the B4-piers entry above explicitly said it never got.
+
+**Timing lesson worth keeping, not just fixed silently:** the first two full runs of this script
+failed on fixed `waitForTimeout` assertions after the bridges-toggle recheck and the zoom sweep.
+Root-caused with a throwaway diagnostic (deleted after use, per this project's convention): both
+are real debounce-settling delays, not app bugs — rapid successive `moveend`/`sourcedata` events
+(from a zoom sweep, or from whatever residual camera motion followed the orbit step immediately
+before the original toggle placement) each reset the 250ms collection debounce, so settling can
+legitimately take up to ~3s under churn. Fixed by switching every such assertion to
+`expect.poll(...)` with real margin (15-30s) instead of a fixed wait, and by relocating the
+toggle check to right after the initial overview (a state already known to settle quickly) rather
+than right after orbit. This is a test-robustness fix, not a product fix — named here because the
+next person extending this script should keep using polling, not fixed waits, for anything that
+depends on the collection debounce.
+
+**Performance comparison (`BRIDGE_CONNECTIVITY_PLAN.md`'s B5 bullet), scope explained:** there is
+no separately-bootable pre-B1..B4 build in this environment to diff against live (that would mean
+checking out an old commit into a second working tree and running a second dev server). What was
+measured instead, with a throwaway diagnostic (built, run, deleted after use): Gamla Stan with
+bridges on vs off, in the same running session — bridges cost **16 extra plain meshes, ~717 extra
+instances (posts/piers), 28,320 extra triangles, 24 extra draw calls**, no extra `gl.info.memory`
+geometry/texture handles at steady state, and no measurable JS heap difference. This is a real,
+directly-comparable cost figure for what B1-B4 add to a scene that already had bridges rendered
+via the old box generator; it is not a diff against the pre-existing box-bridge renderer's own
+cost, which was not separately measured here.
+
+**A real bug found and reproduced, explicitly NOT fixed in this task — flagged for a dedicated
+follow-up:** the plan's own "budget overflow or memory growth after five travel/return cycles"
+check surfaced a genuine anomaly. Measured with a throwaway diagnostic that drives the camera
+directly between Gamla Stan and Manhattan (`map.jumpTo`, bypassing the place-switcher UI, which
+proved too flaky to drive repeatedly headless in this session — a separate, minor test-tooling
+gap, not the finding itself) and reads `scene.children` directly each time:
+- A single isolated travel cycle (Gamla Stan -> Manhattan -> Gamla Stan) is completely clean:
+  plain mesh count returns to exactly the baseline 16, no stale geometry, nothing farther than
+  3000m from the current camera origin (which would indicate a leftover mesh still positioned in
+  the *other* city's now-stale local-meters frame).
+- Across repeated cycles, Gamla Stan's own plain-mesh count jumps from 16 to **56** starting on
+  the *second* return, and then holds steady at exactly 56 for every subsequent cycle (measured
+  through 6 full cycles) — it does not keep growing without bound, but it never corrects back
+  down to 16 either, even after several more clean round trips. Manhattan's own count stayed at a
+  constant 16 throughout, which is itself suspicious (Manhattan's real bridge topology has no
+  reason to coincidentally match Gamla Stan's count) and is flagged as possibly a stale/delayed
+  read rather than Manhattan's true settled state — not confirmed either way.
+- Working hypothesis, explicitly unconfirmed: MapLibre's own placeholder/parent-tile rendering
+  during a fast re-visit to a previously-cached area can transiently render two tile generations
+  at once, which `queryRenderedFeatures` would report as more (partially duplicate) features than
+  the settled view has — inflating `buildRoadGraph`'s node/edge count and hence the solved bridge
+  count for exactly one collection pass. What does *not* fit this hypothesis cleanly: the elevated
+  count persists indefinitely afterward rather than a later, clean pass correcting it back down,
+  which `setData(collectDetails(...))` (a full state replace, confirmed by reading
+  `WorldMap.tsx` directly, not assumed) should otherwise guarantee. The actual mechanism holding
+  the stale/inflated set alive is not identified.
+- **Not fixed here.** Root-causing this properly needs either instrumenting `collectReadyBridgeSurfaces`'s
+  `queryRenderedFeatures` call to log raw feature counts/ids across a reproducing cycle, or
+  reproducing it under a controlled/mocked map (this project's existing fixture style) rather than
+  live tiles, whose tile-cache timing is exactly the suspected variable and is not
+  deterministically controllable from a test. Flagging precisely rather than guessing at a fix:
+  the completion criteria explicitly call for reporting "fallback/unresolved components," and an
+  unresolved product bug found while verifying is the same category of honesty this log has
+  applied to every prior B1-B4 gap.
+
+**Not built/run, named explicitly:**
+- The full 12-zoom x 4-bearing x 3-pitch x 2-DPR x 2-terrain x 3-city screenshot matrix — only a
+  handful of zoom/bearing points at one primary city were actually exercised.
+- San Francisco and Chamonix (the two `terrain: true` presets) were not driven through the browser
+  script at all — terrain-on bridge behavior has zero live-browser coverage from this session
+  (the offline fixtures cover the code path with a mocked `sampleGround`, but never against a real
+  DEM).
+- The place-switcher UI's own click flow was not exercised repeatedly (worked once in
+  `bridges.mjs`'s single Amsterdam switch, but proved unreliable when driven in a tight loop in
+  the performance diagnostic — worked around with direct `map.jumpTo`, which is *not* equivalent
+  to whatever the place-switcher does to React `config` state on top of the camera move; if that
+  extra state change is itself implicated in the mesh-retention bug above, this method would miss
+  it).
+- A true pre-B1..B4 performance baseline (no separately-bootable old build in this environment).
+- Fixing the mesh-retention bug itself (see above).
+
+**Docs updated:** `docs/BRIDGE_CONNECTIVITY_PLAN.md`'s B5 checklist items are now exercised (not
+all checked off in `IDEAS_TODO.md` below, since the full matrix and the found bug remain open).
+
+**Commit status:** this worktree's changes (`tests/bridge-acceptance.test.ts`,
+`tests/browser/bridges.mjs`, this log entry, the `IDEAS_TODO.md` update below) are **not yet
+committed**. This session hit the same global `rtk` PreToolUse hook block `scripts/toggle-rtk-hook.sh`
+documents (confirmed again here: even a bare `git status` is refused while isolated in this
+worktree) — the fix requires a human running `scripts/toggle-rtk-hook.sh off` in a real terminal,
+which this session cannot do itself. See the end of this session's report for the exact commands.
+
+**Next action:** two independent follow-ups, neither blocking the other: (1) root-cause and fix
+the cross-city mesh-retention bug above — the more valuable of the two since it's a real,
+user-visible correctness issue (a scene showing more bridge geometry than the current view
+actually contains); (2) if/when B5's full matrix is ever wanted, it needs its own dedicated
+session given the scale, ideally starting from a controlled/mocked-tile harness for the
+zoom/bearing/pitch grid rather than live tiles, to make it fast and deterministic enough to
+actually run at that size.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

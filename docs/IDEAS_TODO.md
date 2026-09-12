@@ -175,7 +175,25 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       navigable-looking water channels — both need polygon/water geometry
       this module has no access to. Z3's masking and B5's full verification
       protocol remain open from B3, unaffected by this task.
-- [ ] B5 — Connectivity, visual and performance acceptance.
+- [ ] B5 — Connectivity, visual and performance acceptance. **Partially run 2026-09-12** (see
+      work log): `tests/bridge-acceptance.test.ts` (17 tests) covers every named fixture shape
+      end-to-end through the real `collectDetails()` pipeline plus a sampled-position continuity
+      walk (0.02m endpoint tolerance, per-post corridor-clearance check, exaggeration/quality-tier
+      regression guards) fully offline. `tests/browser/bridges.mjs` drove Gamla Stan through 9
+      real-tile checks (publish, bridges toggle, zoom-threshold sweep, tile pan, orbit, reload,
+      located-bridge close-ups) plus an Amsterdam cross-city sanity pass — all passed. Full suite
+      144/144, clean build. **Not done:** the full 12-zoom/4-bearing/3-pitch/2-DPR/2-terrain/
+      3-city matrix (only a scoped subset ran, same reduction pattern as every prior B1-B4
+      session); San Francisco/Chamonix (terrain-on) got no live-browser coverage at all; a true
+      pre-B1-B4 performance baseline (no separately-bootable old build in this environment) —
+      only a same-session bridges-on-vs-off comparison was measured (16 extra meshes, ~717 extra
+      instances, 28,320 extra triangles, 24 extra draw calls, no steady-state memory difference).
+      **A real, reproducible bug was found and left unfixed, flagged for a dedicated follow-up:**
+      repeated fast travel between two cities makes Gamla Stan's published bridge-mesh count jump
+      from a clean 16 to 56 starting on the second return and hold there indefinitely (not
+      unbounded growth, but never self-corrects) — a single isolated round trip is completely
+      clean. Root cause not confirmed; see work log for the measured pattern and the working
+      (unconfirmed) MapLibre tile-cascade hypothesis.
 
 ## Tracking rules
 
