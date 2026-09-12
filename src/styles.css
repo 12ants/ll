@@ -1,10 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap");
 :root {
-  font-family: "DM Sans", sans-serif;
+  /* font-family: "DM Sans", sans-serif; */
   color: #303b34;
   background: #d5d6c7;
   font-synthesis: none;
-  font-size: 13px;
+  /* font-size: 13px; */
   --paper: #f9faf5;
   --ink: #303b34;
   --muted: #889087;
@@ -1409,7 +1409,7 @@ color: #000000!important;}
   justify-content: space-between;
   padding: 0 25px;
   border-bottom: 1px dashed #dfe3d7bb;
-  border-top: : 1px dashed #dfe3d7bb;
+  border-top: 1px dashed #dfe3d7bb;
 }
 
 .orbit-button 
