@@ -1442,6 +1442,150 @@ anything else on top of it. This session's own B3-live-wiring work (next up) wil
 `worktree-zoom-stability-z1` / this cleanup branch's corrected state, not on the currently
 broken `origin/main`.
 
+## 2026-09-12 — B3 reduced-scope live wiring landed and browser-verified: 9/9 solvable bridges publish
+
+**Task:** continue from the prior session's decision point ("accept 9/76 and build B3's live
+wiring now with the plan's required fallback path" vs. "scope fragment-aware stitching
+first"). Per the user, worked directly on `main` (no worktree) for this session — though the
+harness's own background-isolation guard still routed edits into
+`.claude/worktrees/b3-bridge-mesh-wiring` regardless; see the commit/push note at the end of
+this entry for what that means for `main` in practice.
+
+**Ruling made before writing any code — B3 depends on Z3, and Z3 is unwired:** re-checked
+`docs/IDEAS_TODO.md`'s dependency table (`B3 | Depends on: B2, Z3`) and B3's own plan text
+(masking `bridges`/`bridge-edges`/road surfaces "using Z3 fallback source ownership"). Z3 has
+**zero call sites** — only the pure `roadFootprint` function exists (see the 2026-09-11 Z3
+entry). Building Z3's full GeoJSON-source/hysteresis-handoff/terrain-following renderer just to
+satisfy B3's masking bullet is its own multi-stage task, not attempted here. **Scoped B3 down
+accordingly, named explicitly rather than silently skipped:**
+
+- Built: the mesh renderer, live graph/solver wiring, and fallback ownership (never publish a
+  box and a mesh for the same bridge).
+- Deferred to a future Z3 + B3-finishing task: the plan's "controlled depth bias" and 2D-layer
+  masking, and the terrain-following ground-tie-in patch as its own dedicated component (the
+  mesh's own approach-ramp samples already reach ground — see below for why this is a smaller
+  gap than it sounds).
+- Reasoning checked before accepting the risk, not assumed: the *currently shipping*
+  box-bridge deck already floats above ground with a hard, gapped jump and no ramp at all, and
+  it already coexists with the always-on 2D `bridges`/`roads` line layers underneath with no
+  masking — so the new ramped mesh (which actually reaches ground) is a strict visual
+  improvement on the status quo, with one narrow, named risk: right at a ramp's ground anchor,
+  where mesh height approaches the 2D line's flat ground plane, a few pixels of depth-buffer
+  z-fighting are possible. Browser-verified below to not be visually disqualifying.
+
+**A real, separate gap fixed first, because live wiring needed it:** `solveBridge()` returns on
+the *first* failed bridge edge across the whole input graph (already flagged as a live-wiring
+blocker in the 2026-09-12 B3 diagnostic entry: "a single unsolvable one would suppress every
+other bridge"). Added `solveBridges()` (`src/world/bridge-profile.ts`) — solves every bridge
+component independently by calling the module-private `solveOneBridge` directly per edge
+instead of going through `solveBridge`'s short-circuit loop. Checked before building it that
+this needs no graph reduction (unlike the throwaway diagnostic's `reducedGraphFor` workaround):
+`solveOneBridge` only ever reads the given edge's own connected approach chain, never other
+bridges elsewhere in the graph, so the diagnostic's reduction was only ever working around
+`solveBridge`'s own loop, not a real dependency. Also added `defaultMaxGradeForEdge` (12% for
+width <= 3.5m paths, 8% otherwise, per the plan's own stated visual limits) and
+`DEFAULT_MAX_APPROACH = 250`, both previously only inline constants in the throwaway
+diagnostic script, now real exported policy. 3 new targeted tests in
+`tests/bridge-profile.test.ts` (20/20 in that file): a two-component graph where the failing
+half no longer suppresses the solvable half; a per-edge `maxGrade` function actually applied
+per edge, not once for the whole call; and the no-bridge-edges empty case.
+
+**Live wiring built:**
+- `src/world/details-data.ts`: new `collectReadyBridgeSurfaces()` — queries the same
+  `roads`/`bridges` rendered features already used elsewhere in this file, adapts them to
+  `WorldFeature[]` (inline, not reusing Z2's `reconcileFeatures`/`boundCache` — this pass
+  recomputes fresh every collection tick same as every other detail type here, so Z2's
+  cross-tick retention isn't needed yet), builds the graph via B1's `buildRoadGraph`, and
+  solves via the new `solveBridges`. `sampleGround` checks `c.terrain` and returns `0`
+  *before* ever calling `queryTerrainElevation`, matching the plan's "adapter returns zero
+  without touching the map API" line literally, not just relying on `solveBridges`'s own
+  internal terrain-off guard. `WorldDetails` gained `bridges: BridgeMeshEntry[]`
+  (`{ mesh: BridgeMeshData; color: string }` — `BridgeMeshData` itself is pure geometry with no
+  material info, and `BridgeSurface` carries no road class, so color is resolved once here
+  using the same two-tier major/other approximation `bridge-profile.ts` already uses for
+  clearance/thickness: `thickness > 0.9` (major) gets the flat map's major-road tone, else the
+  active palette's road tone — collapsing path/track bridges into the same tone as other minor
+  roads rather than a distinct dirt/paver tint, a named consequence of reusing that existing
+  two-tier simplification rather than a new one).
+- `src/world/bridge-mesh.ts` (existing, unchanged) — `buildBridgeMesh` is called per ready
+  surface exactly as B3's interface specified.
+- `src/world/BridgeMeshes.tsx` (new) — one R3F `<mesh>` per published bridge (not merged into
+  one buffer), matching the plan's "keep bridge IDs with publication metadata so fallback
+  ownership can be updated atomically": a bridge that stops solving just disappears from the
+  array next render and React/R3F disposes that mesh's geometry alone.
+- `src/world/Details.tsx` — renders `<BridgeMeshes entries={data.bridges} />` alongside the
+  existing `<Structures>` instances, inside the same shared Canvas.
+- `src/world/structures.ts` — `collectBridgeParts()` gained a `publishedSurfaces` parameter
+  (default `[]`, so every existing call site not passing it is unaffected). For each raw
+  bridge-tagged segment, if its midpoint lands within 2.5m of any published surface's sample
+  centers, the box/rails/posts/piers for that segment are skipped entirely (fallback ownership
+  is all-or-nothing per segment, never half-boxed). **Named as an approximation, not exact
+  traceability:** there is no direct raw-line-to-graph-edge-id mapping to check instead (B1's
+  graph can split/join raw lines at junctions and tile boundaries), so this matches by geometry
+  proximity against the same source coordinates B2 resampled at <= 5m spacing — verified
+  correct end-to-end by the browser check and the new integration tests below, not just
+  asserted.
+
+**New tests:**
+- `tests/bridge-profile.test.ts` — 3 new `solveBridges` tests (above), file now 20/20.
+- `tests/bridge-live-wiring.test.ts` (new) — end-to-end `collectDetails()` checks with a mocked
+  `Map`: a solvable bridge (45m approaches against a ~37.5m requirement) publishes exactly one
+  mesh in `data.bridges` *and* produces zero `data.structures` for that span (fallback
+  ownership actually prevents double-rendering, not just in theory); a bridge with a
+  deliberately too-short 3m approach publishes no mesh and falls back to the existing box
+  generator exactly as before. Both passed on the first real run after implementation.
+
+**Commands/results:** `pnpm exec vitest run` — 104/104 passed (99 pre-existing + 3 + 2 new).
+`pnpm exec tsc -b` — clean. `pnpm build` — clean, no new warnings beyond the pre-existing
+chunk-size notice.
+
+**Browser evidence (real, not skipped):** confirmed this sandboxed environment has internet
+and a working Playwright/Chromium install (same check prior sessions made). Ran `pnpm dev`
+and a throwaway diagnostic (`tests/browser/bridge-mesh-check.mjs`, built and deleted after use,
+same discipline as this worktree's prior throwaway diagnostics) against the default Gamla Stan
+preset: **9 published bridge meshes** in the live R3F scene — exactly matching the previously
+measured 9/76 `solveBridges`-ready count from the 2026-09-12 option-2 diagnostic, confirming
+the live count matches the offline prediction exactly, not just "some number greater than
+zero." Zero console/page errors. Screenshots (`.artifacts/bridge-mesh-check/`, gitignored, not
+committed) show continuous ramped decks connecting smoothly to the road on each bank at the
+bridges crossing the water channel — a clear, visible improvement over the previously-shipping
+disconnected floating box with a hard, gapped jump. No doubled/overlapping bridge geometry and
+no obvious z-fighting artifact was visible at the inspected zoom/pitch. This is a static
+screenshot check, not B5's full acceptance matrix (12 zooms x 4 bearings x 3 pitches x 2 DPR x
+2 terrain states x 3 cities) — that remains unattempted and is explicitly still open.
+
+**Not built, named explicitly (scope boundary, not oversight):**
+- Z3's actual masking/depth-bias machinery for the 2D `roads`/`bridges` style layers under a
+  published deck — deferred per the ruling above. The seam risk this creates is browser-checked
+  as non-disqualifying here, not eliminated.
+- B4 (railings/posts/piers on the new mesh, saturation budgets) — the published bridges
+  currently render as a bare deck with no railings of their own; the *old* box generator's
+  railings/posts/piers are correctly suppressed for published spans (by the same
+  fallback-ownership check), so a published bridge today has a deck but no railing at all,
+  which is a real, visible gap for B4 to close next, not silently hidden.
+- B5's full verification protocol (deterministic local fixtures, sampled-position walk with
+  0.02m continuity assertions, multi-city/zoom/bearing/pitch/DPR/terrain screenshot matrix,
+  performance-regression comparison) — none of this was attempted; today's browser check is a
+  targeted sanity check on this session's own change, not a substitute.
+- Any change to the 9/76 ceiling itself (fragment-aware bridge stitching, the dead-end
+  population) — out of scope for this task, unchanged from the prior session's measurements.
+
+**Commit/push, stated plainly:** the background-job harness enforced worktree isolation for any
+file edit regardless of the "work on main, no worktree" instruction (a hard technical guard,
+distinct from the RTK/git-hook blocker earlier sessions hit in a different harness) — this
+session's changes live on branch `worktree-b3-bridge-mesh-wiring`, committed there, not on
+`main`. Per this session's own standing instructions, a background session does not push to
+`main`/master under any circumstance. **Next action for the user:** review and merge (or
+fast-forward `main` onto) `worktree-b3-bridge-mesh-wiring` before building anything else on top
+of this; the commit is ready and fully tested but not yet on `main`.
+
+**Next action — for whoever continues this:** B4 (railings/supports/budgets on the new mesh) is
+the next task with no unresolved prerequisite gap for the 9 bridges that already publish, and
+is also what would make a published bridge visually complete (currently a bare deck). A
+dedicated Z3 masking task remains open separately and would remove today's named seam risk
+without touching B4. Neither the 9/76 ceiling nor B5's full verification protocol were
+addressed and remain exactly where the prior session left them.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

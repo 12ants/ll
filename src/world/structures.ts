@@ -3,6 +3,7 @@ import type { Position } from "geojson";
 import { hashString, isNight, localMeters, seeded, insidePolygon } from "./geography";
 import { type WorldConfig } from "./config";
 import { isMajorRoadClass, roadColor, roadDimensions } from "./road-model";
+import type { BridgeSurface, Vec3 } from "./bridge-model";
 export interface StructurePart {
   position: [number, number, number];
   scale: [number, number, number];
@@ -160,15 +161,41 @@ export function collectStructures(
   return parts;
 }
 
-/** Approximate physical decks and supports from visible OSM bridge centerlines. */
+// Same source geometry as B2's <= 5 m resampled deck/approach samples (see
+// bridge-profile.ts), so a raw segment's midpoint that truly belongs to a
+// published surface should land within a couple meters of some sample's
+// center — well under this tolerance — while an unrelated nearby road stays
+// far outside it. Documented approximation, not exact traceability: B1's
+// road graph can split/join raw lines at junctions and tile boundaries, so
+// there is no direct raw-line-to-edge-id mapping to check instead.
+const PUBLISHED_MATCH_TOLERANCE = 2.5; // meters
+
+function isPublished(mid: Vec3, publishedPoints: readonly Vec3[]): boolean {
+  return publishedPoints.some(
+    (p) => Math.hypot(p[0] - mid[0], p[2] - mid[2]) < PUBLISHED_MATCH_TOLERANCE,
+  );
+}
+
+/**
+ * Approximate physical decks and supports from visible OSM bridge
+ * centerlines. `publishedSurfaces` are B3's already-solved, ground-connected
+ * meshes (see details-data.ts's `collectReadyBridgeSurfaces`) for the same
+ * view: any segment they already cover is skipped here entirely — fallback
+ * ownership stays all-or-nothing per bridge line, never half-boxed and
+ * half-meshed.
+ */
 export function collectBridgeParts(
   map: Map,
   c: WorldConfig,
   origin: Position,
+  publishedSurfaces: readonly BridgeSurface[] = [],
 ): StructurePart[] {
   if (!c.bridges || map.getZoom() < 13.5) return [];
   const parts: StructurePart[] = [],
     seen = new Set<string>();
+  const publishedPoints: Vec3[] = publishedSurfaces.flatMap((s) =>
+    s.samples.map((sample) => sample.center),
+  );
   for (const f of map.queryRenderedFeatures(undefined, {
     layers: ["bridges"],
   })) {
@@ -229,6 +256,8 @@ export function collectBridgeParts(
           length > 1500 ||
           Math.hypot(center[0], center[2]) > 2200
         )
+          continue;
+        if (publishedPoints.length && isPublished([center[0], 0, center[2]], publishedPoints))
           continue;
         const rotation = -Math.atan2(dz, dx);
         parts.push({

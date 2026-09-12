@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap, MapGeoJSONFeature } from "maplibre-gl";
-import type { Position } from "geojson";
+import type { Feature, Position } from "geojson";
 import {
   collectStructures,
   collectBridgeParts,
@@ -11,26 +11,46 @@ import {
   hashString,
   scatterPolygon,
   localMeters,
+  metersToPosition,
 } from "./geography";
-import { QUALITY, type WorldConfig } from "./config";
-import { roadDimensions, VEGETATION_SETBACK } from "./road-model";
+import { PALETTES, QUALITY, type WorldConfig } from "./config";
+import { MAJOR_SURFACE_COLOR, roadDimensions, VEGETATION_SETBACK } from "./road-model";
+import { featureKey, type WorldFeature } from "./feature-cache";
+import { buildRoadGraph } from "./road-topology";
+import {
+  solveBridges,
+  DEFAULT_MAX_APPROACH,
+  defaultMaxGradeForEdge,
+} from "./bridge-profile";
+import { buildBridgeMesh } from "./bridge-mesh";
+import type { BridgeMeshData, BridgeSurface, Vec3 } from "./bridge-model";
 export interface Detail {
   position: [number, number, number];
   scale: number;
   rotation: number;
   tone: number;
 }
+/** A published B3 bridge mesh plus the surface color it should render with —
+ * BridgeMeshData itself carries no material info (bridge-mesh.ts is pure
+ * geometry), and BridgeSurface carries no road class (see bridge-profile.ts's
+ * own major-width approximation), so color is resolved once here. */
+export interface BridgeMeshEntry {
+  mesh: BridgeMeshData;
+  color: string;
+}
 export interface WorldDetails {
   origin: [number, number];
   trees: Detail[];
   benches: Detail[];
   structures: StructurePart[];
+  bridges: BridgeMeshEntry[];
 }
 export const EMPTY_DETAILS: WorldDetails = {
   origin: [0, 0],
   trees: [],
   benches: [],
   structures: [],
+  bridges: [],
 };
 function polygons(f: MapGeoJSONFeature): Position[][][] {
   return f.geometry.type === "Polygon"
@@ -38,6 +58,70 @@ function polygons(f: MapGeoJSONFeature): Position[][][] {
     : f.geometry.type === "MultiPolygon"
       ? f.geometry.coordinates
       : [];
+}
+
+/**
+ * Builds every B2-ready bridge surface visible in the current view, using B1's
+ * road graph over the same "roads"/"bridges" features already rendered.
+ *
+ * Reduced-scope B3, named explicitly (see IDEAS_WORK_LOG.md): the plan's B3
+ * lists Z3 (physical ground road surfaces) as a dependency, specifically for
+ * masking the 2D "roads"/"bridges" style layers under a published deck/ramp.
+ * Z3 itself has zero call sites — only its pure `roadFootprint` function
+ * exists. Building Z3's full GeoJSON-source/hysteresis-handoff renderer just
+ * to unblock this is its own multi-stage task, not attempted here. Instead:
+ * the published mesh is added *without* masking the 2D line layers beneath
+ * it. This is a net visual improvement over the status quo regardless (the
+ * existing box-bridge deck already floats with no ramp at all — an abrupt
+ * jump with a visible gap; the new ramp is continuous ground-to-ground), with
+ * one known, narrow, documented risk: right at a ramp's ground anchor, where
+ * the new mesh's height approaches the 2D line's flat ground plane, a few
+ * pixels of depth-buffer z-fighting are possible. See the work log for the
+ * before/after browser check. A future Z3 task should add the plan's
+ * "controlled depth bias" and fallback-source masking to remove this
+ * seam entirely.
+ */
+function collectReadyBridgeSurfaces(
+  map: MapLibreMap,
+  c: WorldConfig,
+  origin: Position,
+): BridgeSurface[] {
+  if (!c.bridges || map.getZoom() < 13.5) return [];
+  const raw = map.queryRenderedFeatures(undefined, {
+    layers: ["roads", "bridges"].filter((id) => !!map.getLayer(id)),
+  });
+  const features: WorldFeature[] = raw.map((f, i) => {
+    const feature: Feature = {
+      type: "Feature",
+      id: f.id,
+      properties: f.properties,
+      geometry: f.geometry,
+    };
+    return {
+      key: `${featureKey("world", f.layer.id, feature)} ${i}`,
+      source: "world",
+      sourceLayer: f.layer.id,
+      feature,
+      revision: 1,
+      completeness: "fragment",
+    };
+  });
+  const graph = buildRoadGraph(features, origin);
+  if (!graph.edges.some((e) => e.bridge)) return [];
+  // "the adapter returns zero without touching the map API" when terrain is
+  // off (B2's plan text) — checked before ever calling queryTerrainElevation,
+  // not merely relying on solveBridges' own internal terrain-off guard.
+  const sampleGround = (point: Vec3): number | null => {
+    if (!c.terrain) return 0;
+    const [lng, lat] = metersToPosition([point[0], point[2]], origin);
+    return map.queryTerrainElevation([lng, lat]) ?? null;
+  };
+  const { surfaces } = solveBridges(graph, sampleGround, {
+    terrain: c.terrain,
+    maxGrade: defaultMaxGradeForEdge,
+    maxApproach: DEFAULT_MAX_APPROACH,
+  });
+  return surfaces;
 }
 
 /** A bounded enrichment pass, run after tile loading/movement, never per frame. */
@@ -49,10 +133,23 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
     trees: [],
     benches: [],
     structures: [],
+    bridges: [],
   };
+  const readySurfaces = collectReadyBridgeSurfaces(map, c, origin);
+  // Same two-tier major/other approximation bridge-profile.ts already uses
+  // for clearance/thickness (RoadEdge carries no road class) — a bridge with
+  // thickness 1.1 was solved as "major" there, so it gets the flat map's
+  // major-road tone; everything else gets the active palette's road tone.
+  // Collapses OSM path/track bridges into the same tone as other minor
+  // roads rather than a distinct dirt/paver tint, matching bridge-profile.ts's
+  // own two-tier (not three-tier) simplification.
+  result.bridges = readySurfaces.map((surface) => ({
+    mesh: buildBridgeMesh(surface),
+    color: surface.thickness > 0.9 ? MAJOR_SURFACE_COLOR : PALETTES[c.palette].road,
+  }));
   result.structures = [
     ...collectStructures(map, c, origin),
-    ...collectBridgeParts(map, c, origin),
+    ...collectBridgeParts(map, c, origin, readySurfaces),
   ];
   if (map.getZoom() < 13.5 || (!c.trees && !c.amenities)) return result;
   const budget = QUALITY[c.quality],

@@ -121,12 +121,32 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       **This closes the B1 parameter-tuning avenue**: 9/76 is the measured
       ceiling without a bigger design change (e.g. fragment-aware stitching
       that widens tolerance only between bridge fragments, never at an
-      approach edge's own two endpoints — flagged, not attempted). Live
-      wiring still not attempted. Needs the user's decision: accept 9/76 and
-      build B3's live wiring now with the plan's required fallback path
-      (better-supported now that the quick wins didn't pan out), or scope
-      fragment-aware stitching as its own task first.
-- [ ] B4 — Exposed-edge railings, supports and strict budgets.
+      approach edge's own two endpoints — flagged, not attempted).
+      **Reduced-scope live wiring landed 2026-09-12** (see work log): the
+      plan's own dependency table lists Z3 for B3, specifically for masking
+      the 2D `roads`/`bridges` style layers — Z3 remains unwired (only
+      `roadFootprint` exists, zero call sites), so that masking/depth-bias
+      piece was deliberately deferred, not built. What *was* built and
+      browser-verified: `solveBridges()` (per-component solving, fixing a
+      real gap where `solveBridge()`'s first-failure short-circuit would have
+      suppressed all 9 ready bridges behind whichever of the other 67 failed
+      first), live graph/solve/mesh wiring in `details-data.ts`, a new
+      `BridgeMeshes.tsx` R3F renderer, and fallback ownership in
+      `structures.ts` so a published bridge's old box/rails/posts/piers are
+      skipped (geometry-proximity matched, not exact edge-id traceability —
+      B1's graph can split/join raw lines, so there's no direct mapping).
+      Measured live at Gamla Stan: **9 of 9 predicted-ready bridges actually
+      publish** in the running app, with continuous ramped decks visibly
+      replacing the old disconnected floating box. Not built: B4's railings
+      (a published bridge currently has a bare deck, no rails — the old
+      box's rails are correctly suppressed for it, so this is a visible gap,
+      not a hidden one), Z3's masking (named seam risk at ramp-to-ground
+      anchors, browser-checked as non-disqualifying but not eliminated), and
+      B5's full verification protocol (multi-city/zoom/bearing/pitch/DPR/
+      terrain matrix) — none of B5 was attempted.
+- [ ] B4 — Exposed-edge railings, supports and strict budgets. Next task with
+      no unresolved prerequisite gap for the 9 bridges that already publish;
+      also what would make a published bridge visually complete (see B3).
 - [ ] B5 — Connectivity, visual and performance acceptance.
 
 ## Tracking rules
