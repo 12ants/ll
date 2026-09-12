@@ -37,6 +37,13 @@ const expect = playwrightExpect.configure({ timeout: 60000 });
 const browser = await chromium.launch({
   headless: true,
   args: ['--no-sandbox', '--enable-unsafe-swiftshader'],
+  // Sandboxed CI/remote containers: PW_CHROMIUM points at a preinstalled
+  // browser, PW_PROXY at an egress proxy the tile hosts are only reachable
+  // through. Both unset locally, where the defaults already work.
+  ...(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}),
+  ...(process.env.PW_PROXY
+    ? { proxy: { server: process.env.PW_PROXY, bypass: 'localhost,127.0.0.1' } }
+    : {}),
 });
 const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
 const errors = [];
@@ -193,6 +200,61 @@ try {
   assert.deepEqual(errors, [], 'no console errors after switching to the Amsterdam preset');
   await page.screenshot({ path: '.artifacts/bridges/amsterdam-overview.png' });
   console.log('PASS: Amsterdam preset loads cleanly (bridge count not asserted -- cross-city sanity only, not located/framed per the full matrix)');
+
+  // --- Repeated cross-city travel/return cycles (BRIDGE_CONNECTIVITY_PLAN.md B5) ---
+  // A prior session reported this as a mesh-retention bug: on repeated
+  // Stockholm<->Manhattan cycles, Gamla Stan's plain-mesh count appeared to
+  // jump from 16 to 56 and never come back down. Re-measured here, that was a
+  // MEASUREMENT artifact, not a product bug -- a fixed short wait after
+  // jumpTo() reads the scene one collection behind, so each city reports the
+  // PREVIOUS city's settled count (which is why the same report also had
+  // Manhattan implausibly pinned at Gamla Stan's exact count). See the work
+  // log. The check below is therefore written the only way that can
+  // distinguish the two: settle until the mesh count stops changing, then
+  // compare each city against its OWN first-visit count.
+  // Absolute counts are deliberately not asserted -- they track live OSM data.
+  const settle = async () => {
+    let previous = -1;
+    let stable = 0;
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(1000);
+      const meshes = (await state()).plainMeshCount;
+      if (meshes === previous) {
+        if (++stable >= 4) break;
+      } else {
+        stable = 0;
+        previous = meshes;
+      }
+    }
+    return (await state()).plainMeshCount;
+  };
+  const cities = {
+    'Gamla Stan': { center: [18.0686, 59.3251], zoom: 15.6 },
+    Manhattan: { center: [-73.9768, 40.7685], zoom: 15.4 },
+  };
+  const goTo = async (name) => {
+    await page.evaluate(
+      (p) => window.verificationRoot.store.getState().r3m.map.jumpTo({ center: p.center, zoom: p.zoom }),
+      cities[name],
+    );
+    return settle();
+  };
+  const baseline = {};
+  for (const name of Object.keys(cities)) baseline[name] = await goTo(name);
+  console.log(`travel baseline: ${JSON.stringify(baseline)}`);
+  assert(baseline['Gamla Stan'] > 0, 'expected published bridges at the Gamla Stan baseline');
+  for (let cycle = 1; cycle <= 4; cycle++)
+    for (const name of Object.keys(cities)) {
+      const count = await goTo(name);
+      assert.equal(
+        count,
+        baseline[name],
+        `cycle ${cycle}: ${name} settled at ${count} plain meshes, but its own first visit settled at ${baseline[name]} -- geometry from the other city is being retained`,
+      );
+    }
+  assert.deepEqual(errors, [], 'no console errors across four cross-city travel/return cycles');
+  console.log('PASS: four Stockholm<->Manhattan travel/return cycles, each city returns to its own settled mesh count (no retention, no growth)');
 } finally {
   await browser.close();
 }

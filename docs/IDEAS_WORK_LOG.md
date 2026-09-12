@@ -1935,6 +1935,98 @@ session given the scale, ideally starting from a controlled/mocked-tile harness 
 zoom/bearing/pitch grid rather than live tiles, to make it fast and deterministic enough to
 actually run at that size.
 
+## 2026-09-12 — B5 follow-up: the cross-city "mesh retention bug" was a measurement artifact
+
+**Status:** resolved — no product bug. The previous entry's flagged follow-up ("root-cause and fix
+the cross-city mesh-retention bug") is closed by re-measurement, not by a code fix, because the
+re-measurement shows there is nothing in the product to fix.
+
+**What the previous session reported:** repeated fast travel between Gamla Stan and Manhattan made
+Gamla Stan's published plain-mesh count jump from 16 to 56 starting on the second return and hold
+there indefinitely, while Manhattan's own count stayed at a constant 16. That entry already flagged
+the Manhattan number as "itself suspicious" — Manhattan's real bridge topology has no reason to
+coincidentally match Gamla Stan's count. That suspicion was correct, and it was the whole finding.
+
+**What was actually measured this session.** `collectReadyBridgeSurfaces` and `WorldMap.tsx`'s
+debounced refresh were temporarily instrumented (pass counter, raw `queryRenderedFeatures` count,
+graph edge/bridge-edge counts, solved surface count, plus a log on the `isMoving()`/`isStyleLoaded()`
+bail), and the cross-city cycle driven live. Instrumentation removed after use, per this project's
+throwaway-diagnostic convention; `git checkout` of both files confirmed clean.
+
+Settling properly before each read (poll until the mesh count stops changing, rather than a fixed
+wait) gives a completely stable, deterministic result across four full cycles:
+
+```
+pass#1  raw=1148 edges=5045 bridgeEdges=76 surfaces=8    Gamla Stan   -> 16 plain meshes
+pass#3  raw=944  edges=7117 bridgeEdges=70 surfaces=33   Manhattan    -> 66 plain meshes
+pass#4  raw=1148 edges=5045 bridgeEdges=76 surfaces=8    Gamla Stan   -> 16 plain meshes
+...identical for every subsequent cycle, 10 passes total
+```
+
+Manhattan legitimately publishes ~33 surfaces (66 meshes = 33 decks + 33 rails); Gamla Stan
+publishes 8 (16 meshes). Neither city ever retained the other's geometry, and neither grew.
+
+**The artifact, reproduced deliberately.** Re-running the same cycle with the original methodology —
+`jumpTo()` followed by a *fixed* short wait, then an immediate `scene.children` read — reproduces
+the reported signature exactly, and inverted:
+
+```
+[fixed 1500ms] cycle 1 Manhattan:  plainMeshes=16     <- Gamla Stan's count
+[fixed 1500ms] cycle 1 Gamla Stan: plainMeshes=66     <- Manhattan's count
+...identical for cycles 2-4
+```
+
+The 250 ms collection debounce plus tile loading for a new city exceeds the fixed wait, so every
+read lands one collection behind and reports the *previous* city's settled count. That produces all
+four reported symptoms at once: a big jump on return, a value that never corrects (it is always
+exactly one destination stale), no unbounded growth, and Manhattan implausibly pinned at Gamla
+Stan's exact number. The previous session's 56 vs this session's 66 is just live OSM data drift in
+Manhattan's bridge count between the two runs. The earlier "clean isolated round trip" observation
+fits too — an isolated trip's final read had time to settle.
+
+This is the same class of mistake the previous entry's own "timing lesson" called out (fixed
+`waitForTimeout` vs `expect.poll` for anything behind the collection debounce); it was fixed in the
+assertions of `bridges.mjs` but not in the throwaway performance/travel diagnostic, which is where
+the false finding came from.
+
+**Changed files:**
+- `tests/browser/bridges.mjs` — added a repeated cross-city travel/return check (4 full
+  Stockholm<->Manhattan cycles) that settles until the mesh count stops changing and then asserts
+  each city returns to *its own* first-visit count. Absolute counts are deliberately not asserted,
+  since they track live OSM data. This is B5's own "budget overflow or memory growth after five
+  travel/return cycles" item, finally exercised with a methodology that can actually distinguish
+  retention from a stale read. Also added `PW_CHROMIUM`/`PW_PROXY` env overrides to the browser
+  launch (both unset locally, where the defaults already work) so the script is runnable in a
+  sandboxed container.
+
+**Commands/results:** full browser suite `node tests/browser/bridges.mjs` against real
+OpenFreeMap tiles — all 12 checks pass, including the new one
+(`travel baseline: {"Gamla Stan":14,"Manhattan":62}`, held exactly across four cycles; the
+baseline differs from the diagnostic run above because live OSM data and which tiles had loaded
+differ between runs — precisely why the check compares each city to itself rather than to a
+constant).
+
+**One real latent gap found while instrumenting, named and NOT fixed** (it is not the mechanism
+behind the reported bug, and fixing it was not needed to close this): `WorldMap.tsx`'s debounced
+refresh bails with `if (disposed || !map.isStyleLoaded() || map.isMoving()) return;` and never
+reschedules, and the `idle` handler only flips `loading` without ever triggering a collection. A
+`bail reason=style` was observed once per run in practice, always followed by another `sourcedata`
+event that collected successfully — so no stale state was ever observed to survive. Named here
+rather than silently fixed, so a future session that does see a stuck collection knows where to
+look.
+
+**Environment note for future remote/sandboxed sessions** (not committed to the repo, recorded
+here because it cost real time): headless Chromium cannot complete a TLS handshake through this
+container's egress proxy even with the CA trusted, so tile requests fail with
+`ERR_CONNECTION_RESET` while `curl` to the same hosts succeeds. The workaround that unblocked all
+live-tile browser verification above: a throwaway local plain-HTTP relay that fetches upstream via
+`curl` and rewrites the TileJSON `tiles` array to point back at itself, with the app pointed at it
+through its own documented `.env.local` `VITE_VECTOR_TILEJSON`/`VITE_DEM_TILEJSON` overrides.
+
+**Next action:** B5's remaining open items are unchanged and unaffected — the full
+zoom/bearing/pitch/DPR/terrain/city matrix, and terrain-on (San Francisco/Chamonix) live-browser
+coverage, which still has none.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

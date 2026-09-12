@@ -188,12 +188,17 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       pre-B1-B4 performance baseline (no separately-bootable old build in this environment) —
       only a same-session bridges-on-vs-off comparison was measured (16 extra meshes, ~717 extra
       instances, 28,320 extra triangles, 24 extra draw calls, no steady-state memory difference).
-      **A real, reproducible bug was found and left unfixed, flagged for a dedicated follow-up:**
-      repeated fast travel between two cities makes Gamla Stan's published bridge-mesh count jump
-      from a clean 16 to 56 starting on the second return and hold there indefinitely (not
-      unbounded growth, but never self-corrects) — a single isolated round trip is completely
-      clean. Root cause not confirmed; see work log for the measured pattern and the working
-      (unconfirmed) MapLibre tile-cascade hypothesis.
+      **The previously-flagged cross-city "mesh retention bug" is RESOLVED as a measurement
+      artifact, not a product bug (2026-09-12 follow-up, see work log).** Instrumented live
+      re-measurement shows each city settles deterministically at its own count across four full
+      travel/return cycles (Gamla Stan 8 surfaces/16 meshes, Manhattan 33/66) with no retention and
+      no growth; the reported 16→56 came from reading `scene.children` after a fixed short wait,
+      which lands one collection debounce behind and reports the *previous* city's count — which is
+      also why that report had Manhattan implausibly pinned at Gamla Stan's exact number. The
+      travel/return cycle check now lives in `tests/browser/bridges.mjs`, settling until the mesh
+      count stops changing and comparing each city against its own first visit. **Still open in
+      B5:** the full 12-zoom/4-bearing/3-pitch/2-DPR/2-terrain/3-city matrix, terrain-on
+      (San Francisco/Chamonix) live-browser coverage, and a true pre-B1-B4 performance baseline.
 
 ## Tracking rules
 
