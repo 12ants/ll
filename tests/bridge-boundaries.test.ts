@@ -25,6 +25,25 @@ import { ORIGIN, metersLine, roadFeature } from "./fixtures/bridge-network";
  * junction) — is covered below instead.
  */
 
+function straightSurfaceWithGround(
+  length: number,
+  width: number,
+  height: number,
+  ground: number,
+): BridgeSurface {
+  const distances: number[] = [];
+  for (let d = 0; d < length; d += 5) distances.push(d);
+  distances.push(length);
+  const samples: ProfileSample[] = distances.map((d) => ({
+    distance: d,
+    center: [d, height, 0],
+    left: [d, height, width / 2],
+    right: [d, height, -width / 2],
+    ground,
+  }));
+  return { id: "with-ground", samples, thickness: 0.8, openings: [] };
+}
+
 function straightSurface(length: number, width: number, height = 2): BridgeSurface {
   const distances: number[] = [];
   for (let d = 0; d < length; d += 5) distances.push(d);
@@ -239,5 +258,41 @@ describe("bridgeAccessories", () => {
       expect(p.position[0]).toBeGreaterThanOrEqual(4.5);
       expect(p.position[0]).toBeLessThanOrEqual(40 - 4.5);
     }
+  });
+
+  it("places round piers under a long-enough deck span, sized from the real ground/deck-height gap", () => {
+    const surface = straightSurfaceWithGround(80, 8, 5, 2); // deck at y=5, ground at y=2 -> 3m piers
+    const piers = bridgeAccessories([], [surface], 100);
+    expect(piers.length).toBeGreaterThan(0);
+    for (const p of piers) {
+      expect(p.kind).toBe("cylinder");
+      expect(p.scale[1]).toBeCloseTo(3, 5); // pier height = deck (5) - ground (2)
+      expect(p.position[1]).toBeCloseTo(2 + 3 / 2, 5); // centered between ground and deck
+    }
+  });
+
+  it("places no piers when the deck span is too short (plan's own gate, matching structures.ts)", () => {
+    const surface = straightSurfaceWithGround(10, 8, 5, 2); // 10m <= 12m gate
+    expect(bridgeAccessories([], [surface], 100)).toEqual([]);
+  });
+
+  it("omits a pier when the deck sits negligibly above ground", () => {
+    const surface = straightSurfaceWithGround(80, 8, 2.1, 2); // only 0.1m clearance
+    expect(bridgeAccessories([], [surface], 100)).toEqual([]);
+  });
+
+  it("omits piers entirely when ground was never retained (no deck-only samples, e.g. an approach-only fixture)", () => {
+    const surface = straightSurface(80, 8); // straightSurface() never sets `ground`
+    expect(bridgeAccessories([], [surface], 100)).toEqual([]);
+  });
+
+  it("shares one combined cap between posts and piers, never exceeding it either way", () => {
+    const edges: [Vec3, Vec3][] = [[[0, 5, 0], [40, 5, 0]]]; // 5 posts worth of edge (8m spacing)
+    const surface = straightSurfaceWithGround(80, 8, 5, 2); // several piers worth of deck
+    const uncapped = bridgeAccessories(edges, [surface], 1000);
+    expect(uncapped.length).toBeGreaterThan(5); // posts alone would already be 5
+    const capped = bridgeAccessories(edges, [surface], 6);
+    expect(capped).toHaveLength(6);
+    expect(capped.some((p) => p.kind === "cylinder")).toBe(true); // piers still got a share of the budget
   });
 });

@@ -14,13 +14,18 @@ import type { StructurePart } from "./structures";
  * bridge-profile.ts's own doc comment) — so `BridgeSurface.openings` is
  * always `[]` and is not consulted here. Every published surface has
  * exactly two openings: its two tie-in anchors, where the ramp meets a real
- * connected road. Piers are not built here: they need ground height sampled
- * *under* the deck at each support location, which today's `BridgeSurface`
- * does not retain (B2 keeps only the finished road-top height, not the raw
- * ground it measured while solving) and `bridgeAccessories`'s own signature
- * has no sampleGround callback to add one live. Flagged for a future,
- * narrow follow-up (retain ground height per sample in B2's solve), not
- * attempted here.
+ * connected road.
+ *
+ * Piers use `ProfileSample.ground`, retained only for samples under the
+ * deck's own span (B2 already measures ground there to size the deck's
+ * clearance — see bridge-profile.ts's `solveOneBridge` — approach/ramp
+ * samples are an interpolated smoothstep curve, not a measured height, so
+ * `ground` stays `undefined` there and never grows a pier). Two constraints
+ * from the plan's own text are **not** implemented, for the same reason:
+ * "exclude piers from lower road/path footprints plus 0.5m clearance" and
+ * "avoid blocking navigable-looking water channels" both need polygon/
+ * water data this module has no access to (`BridgeSurface` carries none).
+ * Named here rather than silently skipped.
  */
 
 // Matches structures.ts's existing box-bridge rail geometry, so a published
@@ -32,6 +37,15 @@ const POST_SIZE = 0.14;
 const POST_HEIGHT = 0.75;
 const POST_CENTER_OFFSET = 0.6; // top of the post overlaps the rail slightly, same as structures.ts's box bridge
 export const ACCESSORY_COLOR = "#7c8179";
+
+// Pier constants match structures.ts's existing collectBridgeParts() pier
+// policy exactly, so a published mesh bridge's piers read as the same
+// physical object as an unpublished (fallback) box bridge's piers.
+const PIER_MIN_SPAN = 12; // meters; below this, no piers at all
+const PIER_MIN_HEIGHT = 0.5; // meters; "omit supports when height is negligible"
+const PIER_RADIUS_MAJOR = 1.5;
+const PIER_RADIUS_OTHER = 1.15;
+export const PIER_COLOR = "#989c91";
 
 /** Plan's own "8 m arc-length intervals," carried through bends and tile
  * joins by walking edge segments in emitted order rather than restarting
@@ -92,16 +106,63 @@ function sameVec3(a: Vec3, b: Vec3): boolean {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < EPSILON;
 }
 
+function nearestByDistance(samples: readonly ProfileSample[], target: number): ProfileSample {
+  let best = samples[0],
+    bestDiff = Math.abs(samples[0].distance - target);
+  for (const s of samples) {
+    const diff = Math.abs(s.distance - target);
+    if (diff < bestDiff) {
+      best = s;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+/**
+ * Round support columns under one surface's deck, spaced like
+ * structures.ts's existing box-bridge piers (2-9 columns, roughly one per
+ * 38m of span). Ground is only ever known at deck-only sample points (see
+ * the file doc comment), so each pier snaps to its nearest such sample
+ * rather than interpolating a ground value between them.
+ */
+function piersForSurface(surface: BridgeSurface): StructurePart[] {
+  const deckSamples = surface.samples.filter((s) => s.ground !== undefined);
+  if (deckSamples.length < 2) return [];
+  const span = deckSamples[deckSamples.length - 1].distance - deckSamples[0].distance;
+  if (span <= PIER_MIN_SPAN) return [];
+  const pierCount = Math.max(2, Math.min(9, Math.round(span / 38) + 1));
+  const major = surface.thickness > 0.9; // same two-tier approximation used in details-data.ts
+  const radius = major ? PIER_RADIUS_MAJOR : PIER_RADIUS_OTHER;
+  const parts: StructurePart[] = [];
+  for (let i = 0; i < pierCount; i++) {
+    const t = pierCount === 1 ? 0.5 : i / (pierCount - 1);
+    const sample = nearestByDistance(deckSamples, deckSamples[0].distance + t * span);
+    const ground = sample.ground;
+    if (ground === undefined) continue; // omit supports when ground is unknown
+    const pierHeight = sample.center[1] - ground;
+    if (pierHeight < PIER_MIN_HEIGHT) continue; // omit supports when height is negligible
+    parts.push({
+      position: [sample.center[0], ground + pierHeight / 2, sample.center[2]],
+      scale: [radius, pierHeight, radius],
+      rotation: 0,
+      color: PIER_COLOR,
+      kind: "cylinder",
+    });
+  }
+  return parts;
+}
+
 /**
  * Vertical support posts along `edges`, spaced at a stable arc-length
- * interval. `surfaces` is accepted per the plan's interface for future pier
- * placement (see the file doc comment) but posts alone don't need it.
- * `cap` is checked before every insertion — dropping later posts, never any
- * already-published deck, once the budget is spent.
+ * interval, plus round piers under each of `surfaces`'s own deck spans
+ * (see `piersForSurface`). `cap` is a single combined instance budget for
+ * both — checked before every insertion — dropping later accessories,
+ * never any already-published deck, once the budget is spent.
  */
 export function bridgeAccessories(
   edges: readonly [Vec3, Vec3][],
-  _surfaces: readonly BridgeSurface[],
+  surfaces: readonly BridgeSurface[],
   cap: number,
 ): StructurePart[] {
   const parts: StructurePart[] = [];
@@ -133,6 +194,13 @@ export function bridgeAccessories(
     }
     phase = segLen - (d - POST_SPACING);
     prevEnd = b;
+  }
+  for (const surface of surfaces) {
+    if (parts.length >= cap) break;
+    for (const pier of piersForSurface(surface)) {
+      if (parts.length >= cap) break;
+      parts.push(pier);
+    }
   }
   return parts;
 }

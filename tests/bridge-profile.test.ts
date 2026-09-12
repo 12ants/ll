@@ -189,6 +189,23 @@ describe("solveBridge", () => {
     expect(deckHeight).toBeCloseTo(bumpHeight + 2, 5);
   });
 
+  it("retains real per-point ground height for deck samples, but not for approach ramp samples (B4 piers need this)", () => {
+    const groundFn = (point: Vec3): number => (point[0] >= 100 && point[0] <= 200 ? 3 : 0);
+    const graph = flatGraph([100, 200], 100);
+    const solution = solveBridge(graph, groundFn, { terrain: true, maxGrade: READY_MAX_GRADE, maxApproach: 250 });
+    expect(solution.status).toBe("ready");
+    if (solution.status !== "ready") return;
+    const samples = solution.surfaces[0].samples;
+    const deckSamples = samples.filter((s) => s.ground !== undefined);
+    expect(deckSamples.length).toBeGreaterThan(0);
+    for (const s of deckSamples) expect(s.ground).toBeCloseTo(3, 5);
+    // The far approach anchor (true ground, away from the deck) never had
+    // per-point ground retained: only a coarse smoothstep curve, not a
+    // measured height, exists at every point along the ramp.
+    expect(samples[0].center[1]).toBeCloseTo(0, 5);
+    expect(samples[0].ground).toBeUndefined();
+  });
+
   it("stays finite over wavy ground (terrain bumps) without producing NaN/Infinity", () => {
     const wavyGround = (point: Vec3): number => 2 * Math.sin(point[0] / 15);
     const graph = flatGraph([100, 200], 150);

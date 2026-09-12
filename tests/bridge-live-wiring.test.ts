@@ -69,10 +69,13 @@ describe("B3 live wiring: bridge mesh publication and fallback ownership", () =>
     expect(data.bridges[0].mesh.indices.length).toBeGreaterThan(0);
     expect(data.bridges[0].rail).not.toBeNull();
     // The old box generator's deck/rail/post boxes (tens of meters long) must
-    // not also draw this same span — but B4's own accessory posts (also
-    // kind: "box", much smaller: 0.14m) are expected now that the deck published.
+    // not also draw this same span — but B4's own accessory posts (kind:
+    // "box", 0.14m) and piers (kind: "cylinder", ~1-1.5m radius) are expected
+    // now that the deck published; both are far smaller than a 50m deck box.
     expect(data.structures.length).toBeGreaterThan(0);
-    expect(data.structures.every((p) => p.kind === "box" && p.scale[0] < 1)).toBe(true);
+    expect(data.structures.every((p) => p.scale[0] < 5)).toBe(true);
+    expect(data.structures.some((p) => p.kind === "box")).toBe(true); // posts
+    expect(data.structures.some((p) => p.kind === "cylinder")).toBe(true); // piers
   });
 
   it("still falls back to the box generator for a bridge that cannot solve", () => {

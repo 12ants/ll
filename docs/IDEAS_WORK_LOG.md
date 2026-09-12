@@ -1701,6 +1701,75 @@ verification) is the next task with no unresolved prerequisite gap for the bridg
 publish — though it remains a large, separate undertaking (the multi-city screenshot/sampling
 matrix alone), not something to fold into a future task's scope by default.
 
+## 2026-09-12 — B4 piers: ground height retained in B2, piers landed; screenshot evidence weaker than prior entries
+
+**Task:** the one remaining B4 bullet flagged as "not built" in the entry above — piers — picked
+up directly ("continue"), following that entry's own recommendation to retain per-sample ground
+height in B2's solve rather than add a live terrain callback to `bridgeAccessories`.
+
+**Built and unit-tested:**
+- `src/world/bridge-model.ts`: `ProfileSample` gained an optional `ground?: number` field,
+  documented as set only for samples under the deck's own span (approach/ramp samples are an
+  interpolated smoothstep curve, never a measured height, so it stays `undefined` there).
+- `src/world/bridge-profile.ts`: `solveOneBridge`'s existing per-stop ground scan under the deck
+  (previously used only to compute `maxGround` for the deck-height formula, then discarded) now
+  retains each stop's own `ground` value and carries it through `RawSample` and `withOffsets`
+  into the final `ProfileSample`s. No behavior change to the deck-height/clearance formula
+  itself — purely additive. 1 new test in `tests/bridge-profile.test.ts` (now 21/21): confirms
+  deck samples carry the real measured ground value and approach samples do not.
+- `src/world/bridge-boundaries.ts`: `bridgeAccessories` now also places round piers
+  (`piersForSurface`, cylinder-kind `StructurePart`s) under each surface's deck-only samples
+  (`ground !== undefined`), spaced like `structures.ts`'s existing box-bridge piers (2-9
+  columns, ~one per 38m of span, gated off entirely below a 12m span), each snapped to its
+  nearest deck sample (ground is only known at sample points, never interpolated between them),
+  omitted when height would be negligible (< 0.5m) — matching the plan's own "omit supports
+  when ground is unknown or height is negligible" line for both cases. Posts and piers now
+  share **one combined cap** (read literally from the plan's "allocate optional supports/posts
+  deterministically within 500 instances" grouping them together), checked before every
+  insertion exactly like posts already were. 5 new tests in `tests/bridge-boundaries.test.ts`
+  (now 16/16): exact pier height/position math from a real ground/deck gap, the 12m span gate,
+  the negligible-height omission, no piers when ground was never retained, and the shared cap
+  actually splitting its budget between posts and piers rather than starving one.
+- `tests/bridge-live-wiring.test.ts`'s solvable-bridge assertion updated again: now also expects
+  at least one `kind: "cylinder"` entry (a pier) alongside the `kind: "box"` posts, both still
+  far smaller than the old box-bridge's tens-of-meters deck.
+
+**Not implemented, named per the plan's own text rather than silently dropped:** "exclude piers
+from lower road/path footprints plus 0.5m clearance" and "avoid blocking navigable-looking water
+channels by default" both need polygon/water geometry this module has no access to —
+`BridgeSurface` carries none, and threading it in would mean a real signature/data-flow change,
+not a parameter tweak. A pier can in principle land inside a lower road's own footprint or in a
+boat channel today; this is a known, stated gap, not an oversight.
+
+**Commands/results:** `pnpm exec vitest run tests/bridge-profile.test.ts` — 21/21. `pnpm exec
+vitest run tests/bridge-boundaries.test.ts` — 16/16. Full `pnpm exec vitest run` — **127/127**
+(122 baseline + 1 B2 + 5 B4-pier tests, with 1 pre-existing B3 integration assertion updated in
+place rather than counted as new). `pnpm exec tsc -b` — clean. `pnpm build` — clean, no new
+warnings.
+
+**Browser evidence — weaker than the B3/B4-rails entries above, stated plainly rather than
+rounded up:** same `pnpm dev` + throwaway-diagnostic discipline. A scene-graph check found a
+non-zero cylinder-`InstancedMesh` count (94, alongside the separate tree-trunk and bench-bin
+cylinder groups already expected at this preset) and zero console/page errors — consistent with
+piers existing in the live scene, but not visually confirmed the way B3's ramp screenshot or
+B4's rail/post close-up were: two close-up camera attempts at different pitch/bearing combinations
+around the same bridge used for those earlier screenshots did not land a clean, unobstructed view
+of a pier (the first was too far back to resolve anything at pier scale; the second's chosen
+bearing put a building directly in the foreground). Rather than keep spending browser-check
+cycles hunting for a better angle, this entry relies on the precise unit-level arithmetic
+(exact height/position/threshold assertions above) plus the non-zero instance count and clean
+console as its evidence, and says so directly instead of implying a screenshot confirmed
+something it didn't.
+
+**Not built:** the two named-but-unimplemented pier constraints above; Z3's masking and B5's
+full verification protocol remain open from prior entries, unaffected by this task.
+
+**Next action:** B4's plan text is now fully covered (railings, posts, piers, budgets) with the
+two explicitly named polygon-data gaps left open. B5 (full connectivity/visual/performance
+verification) is the next task with no unresolved prerequisite gap for the bridges that already
+publish, and would also be the natural place to get a real, unambiguous pier screenshot as part
+of its own required multi-city/zoom/bearing screenshot matrix rather than as an ad hoc diagnostic.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

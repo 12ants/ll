@@ -156,13 +156,25 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       its mandatory deck. All 9 previously-published Gamla Stan bridges kept
       both deck and rail (18 plain meshes measured, exactly 9x2, none
       dropped). Browser close-up confirms a continuous rail with evenly
-      spaced posts on a real published bridge. **Not built: piers** —
-      `BridgeSurface` doesn't retain per-point ground height from B2's solve
-      (only the finished road-top height), and `bridgeAccessories`' plan-
-      specified signature has no live terrain callback either; needs a small
-      follow-up (retain ground height per sample in B2) before piers can be
-      added. Z3's masking and B5's full verification protocol remain open
-      from B3, unaffected by this task.
+      spaced posts on a real published bridge. **Piers landed 2026-09-12**
+      (see work log): `bridge-model.ts`'s `ProfileSample` gained an optional
+      `ground` field, populated in `bridge-profile.ts`'s solve for deck-only
+      samples (never approach/ramp samples, which are an interpolated curve,
+      not a measured height); `bridge-boundaries.ts`'s `bridgeAccessories`
+      places round piers under each surface's deck span (2-9 columns per
+      ~38m, gated off below 12m spans, omitted when negligible height),
+      sharing one combined 500-instance cap with posts. Full suite 127/127,
+      clean build. **Browser evidence weaker here than for rails/posts**: a
+      non-zero pier-cylinder instance count and zero console errors were
+      confirmed, but two close-up screenshot attempts did not land a clean,
+      unobstructed view of an actual pier (stated directly in the work log
+      rather than implied) — B5's own screenshot matrix is the natural place
+      to get an unambiguous shot. **Two constraints from the plan's own B4
+      text remain unimplemented, named rather than silently dropped**:
+      excluding piers from lower road/path footprints, and avoiding
+      navigable-looking water channels — both need polygon/water geometry
+      this module has no access to. Z3's masking and B5's full verification
+      protocol remain open from B3, unaffected by this task.
 - [ ] B5 — Connectivity, visual and performance acceptance.
 
 ## Tracking rules

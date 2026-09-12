@@ -31,6 +31,17 @@ export interface ProfileSample {
   center: Vec3; // Y is the finished roadway top, never deck center.
   left: Vec3;
   right: Vec3;
+  /**
+   * Real sampled ground elevation directly beneath this point (B4's pier
+   * placement needs it). Only ever set for samples under the deck's own
+   * span, where B2 already measures ground to size the deck's clearance
+   * (see bridge-profile.ts's `solveOneBridge`) — approach/ramp samples are
+   * an interpolated smoothstep curve, not a measured ground height at every
+   * point, so this stays `undefined` there. Piers must omit themselves
+   * wherever this is `undefined`, per the plan's own "omit supports when
+   * ground is unknown."
+   */
+  ground?: number;
 }
 
 export interface BridgeSurface {

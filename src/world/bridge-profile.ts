@@ -280,6 +280,8 @@ interface RawSample {
   distance: number;
   center: Vec3;
   width: number;
+  /** See ProfileSample's own doc comment — only ever set for deck samples. */
+  ground?: number;
 }
 
 function buildSideSamples(
@@ -327,7 +329,7 @@ function withOffsets(samples: readonly RawSample[]): ProfileSample[] {
     const half = s.width / 2;
     const left: Vec3 = [s.center[0] + nx * half, s.center[1], s.center[2] + nz * half];
     const right: Vec3 = [s.center[0] - nx * half, s.center[1], s.center[2] - nz * half];
-    return { distance: s.distance, center: s.center, left, right };
+    return { distance: s.distance, center: s.center, left, right, ground: s.ground };
   });
 }
 
@@ -344,7 +346,9 @@ function solveOneBridge(
   // resolution), plus the class/layer clearance — a constant target height for
   // the whole span, matching the existing collectBridgeParts() policy.
   const bridgePts = bridgeEdge.points;
-  const bridgeStops: { distance: number; point: Vec3 }[] = [{ distance: 0, point: bridgePts[0] }];
+  const bridgeStops: { distance: number; point: Vec3; ground?: number }[] = [
+    { distance: 0, point: bridgePts[0] },
+  ];
   for (let i = 1; i < bridgePts.length; i++) {
     const segLen = dist2D(bridgePts[i - 1], bridgePts[i]);
     const steps = Math.max(1, Math.ceil(segLen / SAMPLE_SPACING));
@@ -362,6 +366,7 @@ function solveOneBridge(
     const g = options.terrain ? sampleGround(stop.point) : 0;
     if (g === null)
       return { status: "incomplete", reason: `missing ground elevation data under bridge edge ${bridgeEdge.id}` };
+    stop.ground = g; // retained for B4's pier placement, not just the max used below
     maxGround = Math.max(maxGround, g);
   }
   const deckHeight = maxGround + clearance;
@@ -391,6 +396,7 @@ function solveOneBridge(
     distance: inLength + stop.distance,
     center: [stop.point[0], deckHeight, stop.point[2]],
     width: bridgeEdge.width,
+    ground: stop.ground,
   }));
 
   const outSamplesRaw = buildSideSamples(endSide, "out", inLength + bridgeLength);
