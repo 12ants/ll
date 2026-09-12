@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBridgeMesh } from "../src/world/bridge-mesh";
+import { buildBridgeMesh, buildRailMesh } from "../src/world/bridge-mesh";
+import { RAIL_CENTER_OFFSET, RAIL_THICKNESS } from "../src/world/bridge-boundaries";
 import type { BridgeSurface, ProfileSample, Vec3 } from "../src/world/bridge-model";
 
 function sample(distance: number, center: Vec3, halfWidth: number): ProfileSample {
@@ -152,5 +153,55 @@ describe("buildBridgeMesh", () => {
     // 4 quads per segment (top, underside, 2 walls) x 3 segments x 2 tris = 24,
     // plus 2 end caps x 2 tris = 4.
     expect(mesh.indices.length / 3).toBe(24 + 4);
+  });
+});
+
+describe("buildRailMesh", () => {
+  it("returns empty geometry for no edges", () => {
+    const mesh = buildRailMesh([]);
+    expect(mesh.positions.length).toBe(0);
+    expect(mesh.indices.length).toBe(0);
+  });
+
+  it("skips a degenerate (zero-length) edge instead of emitting garbage triangles", () => {
+    const mesh = buildRailMesh([[[0, 2, 0], [0, 2, 0]]]);
+    expect(mesh.indices.length).toBe(0);
+  });
+
+  it("produces only non-degenerate, positive-area triangles for one straight edge", () => {
+    const mesh = buildRailMesh([[[0, 2, 0], [10, 2, 0]]]);
+    const tris = triangles(mesh);
+    expect(tris.length).toBeGreaterThan(0);
+    for (const [a, b, c] of tris) expect(area(a, b, c)).toBeGreaterThan(1e-9);
+  });
+
+  it("centers the rail bar at RAIL_CENTER_OFFSET above the edge's own height, with exactly RAIL_THICKNESS separating top and bottom", () => {
+    const mesh = buildRailMesh([[[0, 2, 0], [10, 2, 0]]]);
+    const ys = new Set<number>();
+    for (let i = 1; i < mesh.positions.length; i += 3) ys.add(Math.round(mesh.positions[i] * 1e6) / 1e6);
+    const top = Math.round((2 + RAIL_CENTER_OFFSET + RAIL_THICKNESS / 2) * 1e6) / 1e6;
+    const bottom = Math.round((2 + RAIL_CENTER_OFFSET - RAIL_THICKNESS / 2) * 1e6) / 1e6;
+    expect(ys.has(top)).toBe(true);
+    expect(ys.has(bottom)).toBe(true);
+    for (const y of ys) expect(y === top || y === bottom).toBe(true);
+  });
+
+  it("follows a sloped edge's own height rather than a flat constant", () => {
+    // A ramp segment rising from y=0 to y=5 over its length — the rail must
+    // rise with it (this is exactly why rails can't be yaw-only StructurePart
+    // instances, per B4's own plan text).
+    const mesh = buildRailMesh([[[0, 0, 0], [10, 5, 0]]]);
+    const ys = mesh.positions.filter((_, i) => i % 3 === 1);
+    expect(Math.min(...ys)).toBeCloseTo(0 + RAIL_CENTER_OFFSET - RAIL_THICKNESS / 2, 5);
+    expect(Math.max(...ys)).toBeCloseTo(5 + RAIL_CENTER_OFFSET + RAIL_THICKNESS / 2, 5);
+  });
+
+  it("builds one independent prism per edge, even when edges are disconnected", () => {
+    const mesh = buildRailMesh([
+      [[0, 2, 0], [10, 2, 0]],
+      [[1000, 2, 0], [1010, 2, 0]],
+    ]);
+    // Two straight segments -> 4 quads each (top, underside, 2 sides) x 2 tris = 16.
+    expect(mesh.indices.length / 3).toBe(16);
   });
 });

@@ -144,9 +144,25 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       anchors, browser-checked as non-disqualifying but not eliminated), and
       B5's full verification protocol (multi-city/zoom/bearing/pitch/DPR/
       terrain matrix) — none of B5 was attempted.
-- [ ] B4 — Exposed-edge railings, supports and strict budgets. Next task with
-      no unresolved prerequisite gap for the 9 bridges that already publish;
-      also what would make a published bridge visually complete (see B3).
+- [ ] B4 — Exposed-edge railings, supports and strict budgets. **Railings and
+      posts landed and browser-verified 2026-09-12** (see work log):
+      `bridge-boundaries.ts`'s `exposedBridgeEdges`/`bridgeAccessories`
+      (opening-clipped railing boundaries, 8m-spaced posts, 500-instance
+      cap) and `bridge-mesh.ts`'s `buildRailMesh` (sloped rail-bar mesh
+      strips, since a yaw-only `StructurePart` can't tilt with a ramp), wired
+      into `details-data.ts`/`BridgeMeshes.tsx` with a per-quality-tier
+      triangle budget (`QUALITY[...].bridgeTriangles`, Eco 10k/Balanced
+      25k/High 50k) that drops a bridge's optional rail before ever touching
+      its mandatory deck. All 9 previously-published Gamla Stan bridges kept
+      both deck and rail (18 plain meshes measured, exactly 9x2, none
+      dropped). Browser close-up confirms a continuous rail with evenly
+      spaced posts on a real published bridge. **Not built: piers** —
+      `BridgeSurface` doesn't retain per-point ground height from B2's solve
+      (only the finished road-top height), and `bridgeAccessories`' plan-
+      specified signature has no live terrain callback either; needs a small
+      follow-up (retain ground height per sample in B2) before piers can be
+      added. Z3's masking and B5's full verification protocol remain open
+      from B3, unaffected by this task.
 - [ ] B5 — Connectivity, visual and performance acceptance.
 
 ## Tracking rules

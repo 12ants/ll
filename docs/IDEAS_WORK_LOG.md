@@ -1586,6 +1586,121 @@ dedicated Z3 masking task remains open separately and would remove today's named
 without touching B4. Neither the 9/76 ceiling nor B5's full verification protocol were
 addressed and remain exactly where the prior session left them.
 
+## 2026-09-12 — B4: exposed-edge railings and support posts landed and browser-verified
+
+**Task:** [B4](BRIDGE_CONNECTIVITY_PLAN.md#b4-derive-safe-railing-boundaries-and-supports) from
+the [todo list](IDEAS_TODO.md), requested directly ("start B4: railings and supports for the
+published bridges"), continuing on `worktree-b3-bridge-mesh-wiring` (same branch as the open
+B3 PR, since B4 only has anything to render once B3's meshes exist).
+
+**Built and unit-tested:**
+- `src/world/bridge-boundaries.ts` — `exposedBridgeEdges(surfaces): [Vec3, Vec3][]` and
+  `bridgeAccessories(edges, surfaces, cap): StructurePart[]`, matching the plan's own literal
+  signatures. `exposedBridgeEdges` filters each surface's already-computed `left`/`right`
+  sample chain, clipping the "opening" at each end — the plan's "subtract opening intervals
+  including half the connected road width plus a 0.5m shoulder allowance." The opening
+  half-width is read directly from each anchor sample's own width (`|left - right|`) rather
+  than needing separate connected-road data, because B2 already sizes that sample's width from
+  the real connected road it walked to meet (`widthAtDistance` in bridge-profile.ts) — a short
+  span where both openings would overlap returns no edges for that side rather than a bogus
+  single-point railing. `bridgeAccessories` places vertical posts at 8m arc-length intervals,
+  carrying leftover distance ("phase") across consecutive edges that share an endpoint
+  (detected by point-adjacency, since the flat `[Vec3,Vec3][]` interface carries no explicit
+  chain-grouping structure) and resetting phase to 0 at a genuine chain break, checking the cap
+  before every insertion. 11 tests in `tests/bridge-boundaries.test.ts`: exact opening-clipping
+  arithmetic, whole-span-consumed-by-openings, a diagonal bridge (perpendicular-offset dot
+  product asserted ~0, per the plan's own acceptance line), a curved bend's chain staying
+  unbroken, two B1-joined bridge edges' seam producing no spurious break, post spacing exact
+  math, phase continuity through a bend, phase *not* leaking across a genuine chain break,
+  cap enforcement, and posts never landing inside an opening.
+- `src/world/bridge-mesh.ts` gained `buildRailMesh(edges): BridgeMeshData` — a thin rail-bar
+  mesh strip per edge segment, since a sloped approach ramp's rail has to tilt with it, which a
+  yaw-only `StructurePart` box instance cannot represent (the plan's own text: "if sloped rails
+  use mesh strips, keep them in BridgeMeshData"). 6 new tests in `tests/bridge-mesh.test.ts`:
+  empty/degenerate-edge handling, positive-area triangles, exact `RAIL_CENTER_OFFSET`/
+  `RAIL_THICKNESS` positioning, following a sloped edge's own height (not a flat constant), and
+  independent prisms per disconnected edge.
+- `src/world/config.ts`'s `QUALITY` tiers gained `bridgeTriangles` (Eco 10k / Balanced 25k /
+  High 50k), matching the plan's stated ceiling exactly. No separate 8 MiB byte check was
+  added: at these triangle counts (positions+normals+indices), the buffer size stays well
+  under 8 MiB regardless, so the triangle cap is already the binding constraint — reasoned
+  through explicitly rather than silently dropped.
+- `src/world/details-data.ts`: "allocate complete mandatory deck/ramp meshes first" — every
+  ready surface's deck (`buildBridgeMesh`) is built unconditionally; only the *optional* rail
+  (`buildRailMesh`) is subject to the running triangle total against the tier's
+  `bridgeTriangles` ceiling, dropped per-bridge (never the deck) once it would exceed the
+  budget (`BridgeMeshEntry.rail: BridgeMeshData | null`). Support posts use a separate,
+  deterministic 500-instance cap (matching the pre-existing box-bridge convention already in
+  `structures.ts`), computed once across every ready surface's edges together (not per surface)
+  so `bridgeAccessories`' arc-length phase carries correctly through each side's own contiguous
+  chain, then appended to `result.structures`.
+- `src/world/BridgeMeshes.tsx` — the single `BridgeMesh` component was generalized to
+  `MeshBuffer` (same position/normal/index buffer wiring, now shared by both the deck and the
+  optional rail), rendering an extra `<mesh>` per bridge for its rail (using the fixed
+  `ACCESSORY_COLOR` re-exported from `bridge-boundaries.ts`, not the deck's road-class color)
+  when one was built.
+- `tests/bridge-live-wiring.test.ts`'s solvable-bridge case updated: it previously asserted
+  `data.structures` is empty for a published bridge (true before B4); now asserts every
+  `data.structures` entry is a small (< 1m) box — B4's own accessory posts, never the old
+  large box-bridge deck/rail/post geometry — and that at least one exists, plus that the
+  bridge's `rail` field is non-null.
+
+**Named scope reduction, stated plainly (not silently skipped):** piers ("place optional piers
+below the deck underside, with terrain samples at each support location") were **not built**.
+`BridgeSurface` retains only the finished road-top height at each sample, not the raw ground
+height B2 measured while solving (it only ever needed the *maximum* ground under the span to
+size the deck's constant clearance) — and `bridgeAccessories`' own plan-specified signature
+`(edges, surfaces, cap)` has no `sampleGround` callback to query it live either. Building real
+piers needs one of: retaining ground height per sample during B2's solve (a small, surgical
+follow-up — the data already flows through `solveOneBridge`, just isn't kept), or threading a
+live terrain callback through `bridgeAccessories` (a signature change the plan doesn't call
+for). Flagged for a focused follow-up, not attempted here — a published bridge today has decks,
+rails and posts, but no piers underneath, same honest gap style as B3's own "not built" list.
+
+**Test-fixture scope note:** the plan's own B4 bullet also asks for T/Y-entrance,
+bridge-to-bridge-junction and crossing-road-underneath fixtures. Checked directly against this
+codebase's B2 before writing tests: none of those states ever reach a published `BridgeSurface`
+— a junction encountered before an approach's transition completes rejects the whole component,
+and `BridgeSurface.openings` is always `[]` (mid-span branch openings are not modeled at all,
+per bridge-profile.ts's own doc comment). Building fixtures for unreachable states would be
+either untestable no-ops or fictions about behavior that doesn't exist, so they were not added;
+the one adjacent, genuinely reachable case — two bridge edges B1 joins end-to-end through a
+shared node, published as one continuous surface — is covered instead (see above).
+
+**Commands/results:** `pnpm exec vitest run tests/bridge-boundaries.test.ts` — 11/11 (all
+passed on the first real run, after hand-reasoning the expected arithmetic before writing the
+implementation, same discipline as prior B1/B2/B3 sessions). `pnpm exec vitest run
+tests/bridge-mesh.test.ts` — 14/14 (8 pre-existing `buildBridgeMesh` + 6 new `buildRailMesh`,
+also first-run green). Full `pnpm exec vitest run` — **121/121** passed (99 baseline + 5 B3 +
+17 B4). `pnpm exec tsc -b` — clean. `pnpm build` — clean, no new warnings beyond the
+pre-existing chunk-size notice.
+
+**Browser evidence (real, not skipped):** same environment/discipline as the B3 entry above —
+`pnpm dev`, two throwaway diagnostics (`tests/browser/bridge-accessories-check.mjs` and
+`-zoom.mjs`, built and deleted after use) against the live Gamla Stan preset. Plain (non-
+instanced) mesh count went from **9 (B3 only) to 18** — exactly 9 decks + 9 rails, confirming
+**every** published bridge's rail fit within the Balanced-tier 25k-triangle budget (none
+dropped). Zero console/page errors. A close-up screenshot (zoom 19, pitch 55, bearing 20,
+camera aimed at a bridge crossing identified from the overview shot) shows a continuous top
+rail with clearly visible, evenly-spaced vertical posts along both edges of a real published
+bridge deck — matches the intended design exactly, not merely "some geometry rendered."
+Screenshots saved under `.artifacts/bridge-accessories-check/` (gitignored, not committed).
+
+**Not built (named, not silently skipped):**
+- Piers (see above — needs retained ground-height data or a live sampleGround callback, neither
+  of which exists at this layer yet).
+- Z3's 2D-layer masking (still open from the B3 entry, unaffected by B4).
+- B5's full verification protocol (multi-city/zoom/bearing/pitch/DPR/terrain matrix,
+  0.02m-continuity sampled-position walk, performance-regression comparison) — untouched.
+- Any change to the 9/76 solve-rate ceiling — out of scope for this task.
+
+**Next action:** piers are the one clearly-scoped remaining B4 bullet; recommend retaining
+per-sample ground height in B2's solve as the smaller, more natural fix over adding a live
+terrain callback to `bridgeAccessories`. After that, B5 (full connectivity/visual/performance
+verification) is the next task with no unresolved prerequisite gap for the bridges that already
+publish — though it remains a large, separate undertaking (the multi-city screenshot/sampling
+matrix alone), not something to fold into a future task's scope by default.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

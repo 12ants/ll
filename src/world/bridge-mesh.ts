@@ -1,4 +1,5 @@
 import type { BridgeMeshData, BridgeSurface, ProfileSample, Vec3 } from "./bridge-model";
+import { RAIL_CENTER_OFFSET, RAIL_THICKNESS } from "./bridge-boundaries";
 
 /**
  * Builds one indexed deck mesh (top, underside and both side walls) from a
@@ -153,5 +154,53 @@ export function buildBridgeMesh(surface: BridgeSurface): BridgeMeshData {
     lastOutward,
   );
 
+  return builder.toMeshData();
+}
+
+const DEGENERATE_LENGTH = 1e-6; // meters; skips zero-length edge segments
+
+/**
+ * B4: a thin rail-bar mesh strip along each exposed railing edge (see
+ * bridge-boundaries.ts's `exposedBridgeEdges`), following that edge's own
+ * height exactly — a sloped approach ramp's rail has to tilt with it, which
+ * a yaw-only `StructurePart` box instance cannot represent (see B4's own
+ * plan text: "if sloped rails use mesh strips, keep them in
+ * BridgeMeshData"). Each segment becomes its own small rectangular prism
+ * (top, underside, both outward side faces); no end caps and no shared
+ * vertices across segments — same documented scope choice as
+ * `buildBridgeMesh` (a continuous surface, not smooth-shaded or
+ * vertex-deduplicated), and a rail this thin has no visible open end except
+ * at the two extreme, cosmetically negligible tips of the whole run.
+ */
+export function buildRailMesh(edges: readonly [Vec3, Vec3][]): BridgeMeshData {
+  const builder = new MeshBuilder();
+  const half = RAIL_THICKNESS / 2;
+  const top = RAIL_CENTER_OFFSET + half;
+  const bottom = RAIL_CENTER_OFFSET - half;
+  for (const [a, b] of edges) {
+    const dx = b[0] - a[0],
+      dz = b[2] - a[2];
+    const len = Math.hypot(dx, dz);
+    if (len < DEGENERATE_LENGTH) continue;
+    const nx = -dz / len,
+      nz = dx / len;
+    const raised = (p: Vec3, offsetX: number, offsetZ: number, y: number): Vec3 => [
+      p[0] + offsetX,
+      p[1] + y,
+      p[2] + offsetZ,
+    ];
+    const topA0 = raised(a, nx * half, nz * half, top);
+    const topA1 = raised(a, -nx * half, -nz * half, top);
+    const topB0 = raised(b, nx * half, nz * half, top);
+    const topB1 = raised(b, -nx * half, -nz * half, top);
+    const botA0 = raised(a, nx * half, nz * half, bottom);
+    const botA1 = raised(a, -nx * half, -nz * half, bottom);
+    const botB0 = raised(b, nx * half, nz * half, bottom);
+    const botB1 = raised(b, -nx * half, -nz * half, bottom);
+    builder.quad(topA0, topB0, topB1, topA1, [0, 1, 0]);
+    builder.quad(botA1, botB1, botB0, botA0, [0, -1, 0]);
+    builder.quad(topA0, topA1, botA1, botA0, [nx, 0, nz]);
+    builder.quad(topB1, topB0, botB0, botB1, [-nx, 0, -nz]);
+  }
   return builder.toMeshData();
 }

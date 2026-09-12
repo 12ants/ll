@@ -1,32 +1,33 @@
 import { useLayoutEffect, useRef } from "react";
 import { BufferAttribute, type BufferGeometry } from "three";
 import type { BridgeMeshEntry } from "./details-data";
+import type { BridgeMeshData } from "./bridge-model";
+import { ACCESSORY_COLOR } from "./bridge-boundaries";
 
 /**
- * Renders one indexed R3F mesh per published bridge (see
- * `details-data.ts`'s `collectReadyBridgeSurfaces`/`buildBridgeMesh`). Each
- * bridge keeps its own geometry rather than a merged buffer, matching the
- * plan's "keep bridge IDs with publication metadata so fallback ownership
- * can be updated atomically" — a bridge that stops solving (config or view
- * change) simply disappears from `entries` and React unmounts its `<mesh>`,
- * disposing that geometry alone.
+ * Renders one indexed R3F mesh from a `BridgeMeshData` buffer — shared by
+ * both the deck (`buildBridgeMesh`) and the optional rail strip
+ * (`buildRailMesh`, B4), since both are the same flat position/normal/index
+ * shape. A bridge (or its rail alone, once B4's triangle budget drops it —
+ * see `details-data.ts`) that stops solving simply disappears from `entries`
+ * next render and React/R3F disposes that geometry alone.
  */
-function BridgeMesh({ entry }: { entry: BridgeMeshEntry }) {
+function MeshBuffer({ data, color }: { data: BridgeMeshData; color: string }) {
   const geometryRef = useRef<BufferGeometry>(null);
   useLayoutEffect(() => {
     const geometry = geometryRef.current;
     if (!geometry) return;
-    const { positions, normals, indices } = entry.mesh;
+    const { positions, normals, indices } = data;
     geometry.setAttribute("position", new BufferAttribute(positions, 3));
     geometry.setAttribute("normal", new BufferAttribute(normals, 3));
     geometry.setIndex(new BufferAttribute(indices, 1));
     geometry.computeBoundingSphere();
-  }, [entry.mesh]);
-  if (entry.mesh.indices.length === 0) return null;
+  }, [data]);
+  if (data.indices.length === 0) return null;
   return (
     <mesh castShadow receiveShadow>
       <bufferGeometry ref={geometryRef} />
-      <meshStandardMaterial color={entry.color} roughness={0.75} />
+      <meshStandardMaterial color={color} roughness={0.75} />
     </mesh>
   );
 }
@@ -36,8 +37,12 @@ export function BridgeMeshes({ entries }: { entries: BridgeMeshEntry[] }) {
   return (
     <>
       {entries.map((entry, i) => (
-        <BridgeMesh key={i} entry={entry} />
+        <MeshBuffer key={`deck-${i}`} data={entry.mesh} color={entry.color} />
       ))}
+      {entries.map(
+        (entry, i) =>
+          entry.rail && <MeshBuffer key={`rail-${i}`} data={entry.rail} color={ACCESSORY_COLOR} />,
+      )}
     </>
   );
 }

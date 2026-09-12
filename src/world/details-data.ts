@@ -22,7 +22,8 @@ import {
   DEFAULT_MAX_APPROACH,
   defaultMaxGradeForEdge,
 } from "./bridge-profile";
-import { buildBridgeMesh } from "./bridge-mesh";
+import { buildBridgeMesh, buildRailMesh } from "./bridge-mesh";
+import { exposedBridgeEdges, bridgeAccessories } from "./bridge-boundaries";
 import type { BridgeMeshData, BridgeSurface, Vec3 } from "./bridge-model";
 export interface Detail {
   position: [number, number, number];
@@ -37,6 +38,11 @@ export interface Detail {
 export interface BridgeMeshEntry {
   mesh: BridgeMeshData;
   color: string;
+  /** `null` when this bridge's own rail was dropped to stay within the
+   * quality tier's combined triangle budget (see `collectDetails`) —
+   * "drop optional details before falling back an entire component": the
+   * deck itself is never affected. */
+  rail: BridgeMeshData | null;
 }
 export interface WorldDetails {
   origin: [number, number];
@@ -143,13 +149,38 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
   // Collapses OSM path/track bridges into the same tone as other minor
   // roads rather than a distinct dirt/paver tint, matching bridge-profile.ts's
   // own two-tier (not three-tier) simplification.
-  result.bridges = readySurfaces.map((surface) => ({
-    mesh: buildBridgeMesh(surface),
-    color: surface.thickness > 0.9 ? MAJOR_SURFACE_COLOR : PALETTES[c.palette].road,
-  }));
+  //
+  // B4: "allocate complete mandatory deck/ramp meshes first" — every ready
+  // surface's deck is built unconditionally; only the *optional* rail strip
+  // is subject to the quality tier's combined triangle ceiling, dropped
+  // per-bridge (never the deck) once the running total would exceed it.
+  let bridgeTriangleTotal = 0;
+  const bridgeTriangleBudget = QUALITY[c.quality].bridgeTriangles;
+  result.bridges = readySurfaces.map((surface) => {
+    const mesh = buildBridgeMesh(surface);
+    bridgeTriangleTotal += mesh.indices.length / 3;
+    const railMesh = buildRailMesh(exposedBridgeEdges([surface]));
+    const railTriangles = railMesh.indices.length / 3;
+    const fitsBudget = bridgeTriangleTotal + railTriangles <= bridgeTriangleBudget;
+    if (fitsBudget) bridgeTriangleTotal += railTriangles;
+    return {
+      mesh,
+      color: surface.thickness > 0.9 ? MAJOR_SURFACE_COLOR : PALETTES[c.palette].road,
+      rail: fitsBudget ? railMesh : null,
+    };
+  });
+  // Support posts: a separate, deterministic 500-instance cap (matching the
+  // pre-existing box-bridge convention in structures.ts), independent of the
+  // triangle budget above since these are StructurePart instances, not mesh
+  // triangles. Computed once across every ready surface together (not per
+  // surface) so bridgeAccessories' arc-length phase carries correctly
+  // through each side's own contiguous chain.
+  const railingEdges = exposedBridgeEdges(readySurfaces);
+  const bridgePosts = bridgeAccessories(railingEdges, readySurfaces, 500);
   result.structures = [
     ...collectStructures(map, c, origin),
     ...collectBridgeParts(map, c, origin, readySurfaces),
+    ...bridgePosts,
   ];
   if (map.getZoom() < 13.5 || (!c.trees && !c.amenities)) return result;
   const budget = QUALITY[c.quality],
