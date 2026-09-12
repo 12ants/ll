@@ -33,17 +33,6 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
 
 ## Implementation tracking
 
-<<<<<<< HEAD
-- [ ] Z1 — Shared physical dimensions and road appearance.
-- [ ] Z2 — Bounded, stable feature cache.
-- [ ] F1 — Universal base facade treatment, including prototype acceptance.
-- [ ] F2 — Correct ring, wall normal and height handling.
-- [ ] F3 — Fair, stable detail allocation and appearance refresh.
-- [ ] Z3 — Physical road surfaces and overview handoff.
-- [ ] B1 — Road graph and verified bridge connections.
-- [ ] B2 — Continuous approach and bridge profiles.
-- [ ] B3 — Joined surface meshes and ground tie-ins.
-=======
 - [x] Z1 — Shared physical dimensions and road appearance.
 - [ ] Z2 — Bounded, stable feature cache. Core module (`feature-cache.ts`: `featureKey`,
       `reconcileFeatures`, `boundCache`) landed and fully unit-tested, but it has **zero
@@ -137,7 +126,6 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       build B3's live wiring now with the plan's required fallback path
       (better-supported now that the quick wins didn't pan out), or scope
       fragment-aware stitching as its own task first.
->>>>>>> 4dcb661d1c4a46e89f16b35e09b06153269cfa88
 - [ ] B4 — Exposed-edge railings, supports and strict budgets.
 - [ ] B5 — Connectivity, visual and performance acceptance.
 
