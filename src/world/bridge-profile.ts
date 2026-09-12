@@ -280,6 +280,8 @@ interface RawSample {
   distance: number;
   center: Vec3;
   width: number;
+  /** See ProfileSample's own doc comment — only ever set for deck samples. */
+  ground?: number;
 }
 
 function buildSideSamples(
@@ -327,7 +329,7 @@ function withOffsets(samples: readonly RawSample[]): ProfileSample[] {
     const half = s.width / 2;
     const left: Vec3 = [s.center[0] + nx * half, s.center[1], s.center[2] + nz * half];
     const right: Vec3 = [s.center[0] - nx * half, s.center[1], s.center[2] - nz * half];
-    return { distance: s.distance, center: s.center, left, right };
+    return { distance: s.distance, center: s.center, left, right, ground: s.ground };
   });
 }
 
@@ -344,7 +346,9 @@ function solveOneBridge(
   // resolution), plus the class/layer clearance — a constant target height for
   // the whole span, matching the existing collectBridgeParts() policy.
   const bridgePts = bridgeEdge.points;
-  const bridgeStops: { distance: number; point: Vec3 }[] = [{ distance: 0, point: bridgePts[0] }];
+  const bridgeStops: { distance: number; point: Vec3; ground?: number }[] = [
+    { distance: 0, point: bridgePts[0] },
+  ];
   for (let i = 1; i < bridgePts.length; i++) {
     const segLen = dist2D(bridgePts[i - 1], bridgePts[i]);
     const steps = Math.max(1, Math.ceil(segLen / SAMPLE_SPACING));
@@ -362,6 +366,7 @@ function solveOneBridge(
     const g = options.terrain ? sampleGround(stop.point) : 0;
     if (g === null)
       return { status: "incomplete", reason: `missing ground elevation data under bridge edge ${bridgeEdge.id}` };
+    stop.ground = g; // retained for B4's pier placement, not just the max used below
     maxGround = Math.max(maxGround, g);
   }
   const deckHeight = maxGround + clearance;
@@ -391,6 +396,7 @@ function solveOneBridge(
     distance: inLength + stop.distance,
     center: [stop.point[0], deckHeight, stop.point[2]],
     width: bridgeEdge.width,
+    ground: stop.ground,
   }));
 
   const outSamplesRaw = buildSideSamples(endSide, "out", inLength + bridgeLength);
@@ -439,4 +445,63 @@ export function solveBridge(
     for (const id of result.consumedBridgeEdgeIds) processed.add(id);
   }
   return { status: "ready", surfaces };
+}
+
+/** Plan's own stated visual limits (not civil-engineering claims): 12% for
+ * narrow paths, 8% for everything else, extending an approach up to 250 m. */
+export const DEFAULT_MAX_APPROACH = 250; // meters
+const PATH_WIDTH_THRESHOLD = 3.5; // meters; matches Z1's path/track class fallback
+export function defaultMaxGradeForEdge(edge: RoadEdge): number {
+  return edge.width <= PATH_WIDTH_THRESHOLD ? 0.12 : 0.08;
+}
+
+export interface BridgeSolveResult {
+  surfaces: BridgeSurface[];
+  rejected: { edgeId: string; status: "incomplete" | "infeasible"; reason: string }[];
+}
+
+/**
+ * Solves every bridge component in `graph` independently. Unlike
+ * `solveBridge()`, one failed component never suppresses the rest: measured
+ * live-data diagnostics (IDEAS_WORK_LOG.md, 2026-09-12 B3 entries) found a
+ * real view can hold dozens of bridge edges where the overwhelming majority
+ * fail (missing approach topology, junctions too close), so a first-failure
+ * short-circuit across the whole graph would publish nothing. `solveOneBridge`
+ * only ever reads the given edge's own connected approach chain — never other
+ * bridges elsewhere in the graph — so calling it directly per edge here needs
+ * no graph reduction to isolate one component from another (the throwaway
+ * diagnostic's `reducedGraphFor` was only needed to work around
+ * `solveBridge`'s own short-circuit loop, not a real dependency).
+ */
+export function solveBridges(
+  graph: RoadGraph,
+  sampleGround: (point: Vec3) => number | null,
+  options: {
+    terrain: boolean;
+    maxGrade: number | ((edge: RoadEdge) => number);
+    maxApproach: number;
+  },
+): BridgeSolveResult {
+  const bridgeEdges = graph.edges.filter((e) => e.bridge);
+  const processed = new Set<string>();
+  const surfaces: BridgeSurface[] = [];
+  const rejected: BridgeSolveResult["rejected"] = [];
+  for (const edge of bridgeEdges) {
+    if (processed.has(edge.id)) continue;
+    const maxGrade =
+      typeof options.maxGrade === "function" ? options.maxGrade(edge) : options.maxGrade;
+    const result = solveOneBridge(graph, edge, sampleGround, {
+      terrain: options.terrain,
+      maxGrade,
+      maxApproach: options.maxApproach,
+    });
+    if ("reason" in result) {
+      rejected.push({ edgeId: edge.id, status: result.status, reason: result.reason });
+      processed.add(edge.id);
+      continue;
+    }
+    surfaces.push(result.surface);
+    for (const id of result.consumedBridgeEdgeIds) processed.add(id);
+  }
+  return { surfaces, rejected };
 }

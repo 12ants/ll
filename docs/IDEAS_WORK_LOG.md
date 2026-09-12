@@ -1442,6 +1442,334 @@ anything else on top of it. This session's own B3-live-wiring work (next up) wil
 `worktree-zoom-stability-z1` / this cleanup branch's corrected state, not on the currently
 broken `origin/main`.
 
+## 2026-09-12 — B3 reduced-scope live wiring landed and browser-verified: 9/9 solvable bridges publish
+
+**Task:** continue from the prior session's decision point ("accept 9/76 and build B3's live
+wiring now with the plan's required fallback path" vs. "scope fragment-aware stitching
+first"). Per the user, worked directly on `main` (no worktree) for this session — though the
+harness's own background-isolation guard still routed edits into
+`.claude/worktrees/b3-bridge-mesh-wiring` regardless; see the commit/push note at the end of
+this entry for what that means for `main` in practice.
+
+**Ruling made before writing any code — B3 depends on Z3, and Z3 is unwired:** re-checked
+`docs/IDEAS_TODO.md`'s dependency table (`B3 | Depends on: B2, Z3`) and B3's own plan text
+(masking `bridges`/`bridge-edges`/road surfaces "using Z3 fallback source ownership"). Z3 has
+**zero call sites** — only the pure `roadFootprint` function exists (see the 2026-09-11 Z3
+entry). Building Z3's full GeoJSON-source/hysteresis-handoff/terrain-following renderer just to
+satisfy B3's masking bullet is its own multi-stage task, not attempted here. **Scoped B3 down
+accordingly, named explicitly rather than silently skipped:**
+
+- Built: the mesh renderer, live graph/solver wiring, and fallback ownership (never publish a
+  box and a mesh for the same bridge).
+- Deferred to a future Z3 + B3-finishing task: the plan's "controlled depth bias" and 2D-layer
+  masking, and the terrain-following ground-tie-in patch as its own dedicated component (the
+  mesh's own approach-ramp samples already reach ground — see below for why this is a smaller
+  gap than it sounds).
+- Reasoning checked before accepting the risk, not assumed: the *currently shipping*
+  box-bridge deck already floats above ground with a hard, gapped jump and no ramp at all, and
+  it already coexists with the always-on 2D `bridges`/`roads` line layers underneath with no
+  masking — so the new ramped mesh (which actually reaches ground) is a strict visual
+  improvement on the status quo, with one narrow, named risk: right at a ramp's ground anchor,
+  where mesh height approaches the 2D line's flat ground plane, a few pixels of depth-buffer
+  z-fighting are possible. Browser-verified below to not be visually disqualifying.
+
+**A real, separate gap fixed first, because live wiring needed it:** `solveBridge()` returns on
+the *first* failed bridge edge across the whole input graph (already flagged as a live-wiring
+blocker in the 2026-09-12 B3 diagnostic entry: "a single unsolvable one would suppress every
+other bridge"). Added `solveBridges()` (`src/world/bridge-profile.ts`) — solves every bridge
+component independently by calling the module-private `solveOneBridge` directly per edge
+instead of going through `solveBridge`'s short-circuit loop. Checked before building it that
+this needs no graph reduction (unlike the throwaway diagnostic's `reducedGraphFor` workaround):
+`solveOneBridge` only ever reads the given edge's own connected approach chain, never other
+bridges elsewhere in the graph, so the diagnostic's reduction was only ever working around
+`solveBridge`'s own loop, not a real dependency. Also added `defaultMaxGradeForEdge` (12% for
+width <= 3.5m paths, 8% otherwise, per the plan's own stated visual limits) and
+`DEFAULT_MAX_APPROACH = 250`, both previously only inline constants in the throwaway
+diagnostic script, now real exported policy. 3 new targeted tests in
+`tests/bridge-profile.test.ts` (20/20 in that file): a two-component graph where the failing
+half no longer suppresses the solvable half; a per-edge `maxGrade` function actually applied
+per edge, not once for the whole call; and the no-bridge-edges empty case.
+
+**Live wiring built:**
+- `src/world/details-data.ts`: new `collectReadyBridgeSurfaces()` — queries the same
+  `roads`/`bridges` rendered features already used elsewhere in this file, adapts them to
+  `WorldFeature[]` (inline, not reusing Z2's `reconcileFeatures`/`boundCache` — this pass
+  recomputes fresh every collection tick same as every other detail type here, so Z2's
+  cross-tick retention isn't needed yet), builds the graph via B1's `buildRoadGraph`, and
+  solves via the new `solveBridges`. `sampleGround` checks `c.terrain` and returns `0`
+  *before* ever calling `queryTerrainElevation`, matching the plan's "adapter returns zero
+  without touching the map API" line literally, not just relying on `solveBridges`'s own
+  internal terrain-off guard. `WorldDetails` gained `bridges: BridgeMeshEntry[]`
+  (`{ mesh: BridgeMeshData; color: string }` — `BridgeMeshData` itself is pure geometry with no
+  material info, and `BridgeSurface` carries no road class, so color is resolved once here
+  using the same two-tier major/other approximation `bridge-profile.ts` already uses for
+  clearance/thickness: `thickness > 0.9` (major) gets the flat map's major-road tone, else the
+  active palette's road tone — collapsing path/track bridges into the same tone as other minor
+  roads rather than a distinct dirt/paver tint, a named consequence of reusing that existing
+  two-tier simplification rather than a new one).
+- `src/world/bridge-mesh.ts` (existing, unchanged) — `buildBridgeMesh` is called per ready
+  surface exactly as B3's interface specified.
+- `src/world/BridgeMeshes.tsx` (new) — one R3F `<mesh>` per published bridge (not merged into
+  one buffer), matching the plan's "keep bridge IDs with publication metadata so fallback
+  ownership can be updated atomically": a bridge that stops solving just disappears from the
+  array next render and React/R3F disposes that mesh's geometry alone.
+- `src/world/Details.tsx` — renders `<BridgeMeshes entries={data.bridges} />` alongside the
+  existing `<Structures>` instances, inside the same shared Canvas.
+- `src/world/structures.ts` — `collectBridgeParts()` gained a `publishedSurfaces` parameter
+  (default `[]`, so every existing call site not passing it is unaffected). For each raw
+  bridge-tagged segment, if its midpoint lands within 2.5m of any published surface's sample
+  centers, the box/rails/posts/piers for that segment are skipped entirely (fallback ownership
+  is all-or-nothing per segment, never half-boxed). **Named as an approximation, not exact
+  traceability:** there is no direct raw-line-to-graph-edge-id mapping to check instead (B1's
+  graph can split/join raw lines at junctions and tile boundaries), so this matches by geometry
+  proximity against the same source coordinates B2 resampled at <= 5m spacing — verified
+  correct end-to-end by the browser check and the new integration tests below, not just
+  asserted.
+
+**New tests:**
+- `tests/bridge-profile.test.ts` — 3 new `solveBridges` tests (above), file now 20/20.
+- `tests/bridge-live-wiring.test.ts` (new) — end-to-end `collectDetails()` checks with a mocked
+  `Map`: a solvable bridge (45m approaches against a ~37.5m requirement) publishes exactly one
+  mesh in `data.bridges` *and* produces zero `data.structures` for that span (fallback
+  ownership actually prevents double-rendering, not just in theory); a bridge with a
+  deliberately too-short 3m approach publishes no mesh and falls back to the existing box
+  generator exactly as before. Both passed on the first real run after implementation.
+
+**Commands/results:** `pnpm exec vitest run` — 104/104 passed (99 pre-existing + 3 + 2 new).
+`pnpm exec tsc -b` — clean. `pnpm build` — clean, no new warnings beyond the pre-existing
+chunk-size notice.
+
+**Browser evidence (real, not skipped):** confirmed this sandboxed environment has internet
+and a working Playwright/Chromium install (same check prior sessions made). Ran `pnpm dev`
+and a throwaway diagnostic (`tests/browser/bridge-mesh-check.mjs`, built and deleted after use,
+same discipline as this worktree's prior throwaway diagnostics) against the default Gamla Stan
+preset: **9 published bridge meshes** in the live R3F scene — exactly matching the previously
+measured 9/76 `solveBridges`-ready count from the 2026-09-12 option-2 diagnostic, confirming
+the live count matches the offline prediction exactly, not just "some number greater than
+zero." Zero console/page errors. Screenshots (`.artifacts/bridge-mesh-check/`, gitignored, not
+committed) show continuous ramped decks connecting smoothly to the road on each bank at the
+bridges crossing the water channel — a clear, visible improvement over the previously-shipping
+disconnected floating box with a hard, gapped jump. No doubled/overlapping bridge geometry and
+no obvious z-fighting artifact was visible at the inspected zoom/pitch. This is a static
+screenshot check, not B5's full acceptance matrix (12 zooms x 4 bearings x 3 pitches x 2 DPR x
+2 terrain states x 3 cities) — that remains unattempted and is explicitly still open.
+
+**Not built, named explicitly (scope boundary, not oversight):**
+- Z3's actual masking/depth-bias machinery for the 2D `roads`/`bridges` style layers under a
+  published deck — deferred per the ruling above. The seam risk this creates is browser-checked
+  as non-disqualifying here, not eliminated.
+- B4 (railings/posts/piers on the new mesh, saturation budgets) — the published bridges
+  currently render as a bare deck with no railings of their own; the *old* box generator's
+  railings/posts/piers are correctly suppressed for published spans (by the same
+  fallback-ownership check), so a published bridge today has a deck but no railing at all,
+  which is a real, visible gap for B4 to close next, not silently hidden.
+- B5's full verification protocol (deterministic local fixtures, sampled-position walk with
+  0.02m continuity assertions, multi-city/zoom/bearing/pitch/DPR/terrain screenshot matrix,
+  performance-regression comparison) — none of this was attempted; today's browser check is a
+  targeted sanity check on this session's own change, not a substitute.
+- Any change to the 9/76 ceiling itself (fragment-aware bridge stitching, the dead-end
+  population) — out of scope for this task, unchanged from the prior session's measurements.
+
+**Commit/push, stated plainly:** the background-job harness enforced worktree isolation for any
+file edit regardless of the "work on main, no worktree" instruction (a hard technical guard,
+distinct from the RTK/git-hook blocker earlier sessions hit in a different harness) — this
+session's changes live on branch `worktree-b3-bridge-mesh-wiring`, committed there, not on
+`main`. Per this session's own standing instructions, a background session does not push to
+`main`/master under any circumstance. **Next action for the user:** review and merge (or
+fast-forward `main` onto) `worktree-b3-bridge-mesh-wiring` before building anything else on top
+of this; the commit is ready and fully tested but not yet on `main`.
+
+**Next action — for whoever continues this:** B4 (railings/supports/budgets on the new mesh) is
+the next task with no unresolved prerequisite gap for the 9 bridges that already publish, and
+is also what would make a published bridge visually complete (currently a bare deck). A
+dedicated Z3 masking task remains open separately and would remove today's named seam risk
+without touching B4. Neither the 9/76 ceiling nor B5's full verification protocol were
+addressed and remain exactly where the prior session left them.
+
+## 2026-09-12 — B4: exposed-edge railings and support posts landed and browser-verified
+
+**Task:** [B4](BRIDGE_CONNECTIVITY_PLAN.md#b4-derive-safe-railing-boundaries-and-supports) from
+the [todo list](IDEAS_TODO.md), requested directly ("start B4: railings and supports for the
+published bridges"), continuing on `worktree-b3-bridge-mesh-wiring` (same branch as the open
+B3 PR, since B4 only has anything to render once B3's meshes exist).
+
+**Built and unit-tested:**
+- `src/world/bridge-boundaries.ts` — `exposedBridgeEdges(surfaces): [Vec3, Vec3][]` and
+  `bridgeAccessories(edges, surfaces, cap): StructurePart[]`, matching the plan's own literal
+  signatures. `exposedBridgeEdges` filters each surface's already-computed `left`/`right`
+  sample chain, clipping the "opening" at each end — the plan's "subtract opening intervals
+  including half the connected road width plus a 0.5m shoulder allowance." The opening
+  half-width is read directly from each anchor sample's own width (`|left - right|`) rather
+  than needing separate connected-road data, because B2 already sizes that sample's width from
+  the real connected road it walked to meet (`widthAtDistance` in bridge-profile.ts) — a short
+  span where both openings would overlap returns no edges for that side rather than a bogus
+  single-point railing. `bridgeAccessories` places vertical posts at 8m arc-length intervals,
+  carrying leftover distance ("phase") across consecutive edges that share an endpoint
+  (detected by point-adjacency, since the flat `[Vec3,Vec3][]` interface carries no explicit
+  chain-grouping structure) and resetting phase to 0 at a genuine chain break, checking the cap
+  before every insertion. 11 tests in `tests/bridge-boundaries.test.ts`: exact opening-clipping
+  arithmetic, whole-span-consumed-by-openings, a diagonal bridge (perpendicular-offset dot
+  product asserted ~0, per the plan's own acceptance line), a curved bend's chain staying
+  unbroken, two B1-joined bridge edges' seam producing no spurious break, post spacing exact
+  math, phase continuity through a bend, phase *not* leaking across a genuine chain break,
+  cap enforcement, and posts never landing inside an opening.
+- `src/world/bridge-mesh.ts` gained `buildRailMesh(edges): BridgeMeshData` — a thin rail-bar
+  mesh strip per edge segment, since a sloped approach ramp's rail has to tilt with it, which a
+  yaw-only `StructurePart` box instance cannot represent (the plan's own text: "if sloped rails
+  use mesh strips, keep them in BridgeMeshData"). 6 new tests in `tests/bridge-mesh.test.ts`:
+  empty/degenerate-edge handling, positive-area triangles, exact `RAIL_CENTER_OFFSET`/
+  `RAIL_THICKNESS` positioning, following a sloped edge's own height (not a flat constant), and
+  independent prisms per disconnected edge.
+- `src/world/config.ts`'s `QUALITY` tiers gained `bridgeTriangles` (Eco 10k / Balanced 25k /
+  High 50k), matching the plan's stated ceiling exactly. No separate 8 MiB byte check was
+  added: at these triangle counts (positions+normals+indices), the buffer size stays well
+  under 8 MiB regardless, so the triangle cap is already the binding constraint — reasoned
+  through explicitly rather than silently dropped.
+- `src/world/details-data.ts`: "allocate complete mandatory deck/ramp meshes first" — every
+  ready surface's deck (`buildBridgeMesh`) is built unconditionally; only the *optional* rail
+  (`buildRailMesh`) is subject to the running triangle total against the tier's
+  `bridgeTriangles` ceiling, dropped per-bridge (never the deck) once it would exceed the
+  budget (`BridgeMeshEntry.rail: BridgeMeshData | null`). Support posts use a separate,
+  deterministic 500-instance cap (matching the pre-existing box-bridge convention already in
+  `structures.ts`), computed once across every ready surface's edges together (not per surface)
+  so `bridgeAccessories`' arc-length phase carries correctly through each side's own contiguous
+  chain, then appended to `result.structures`.
+- `src/world/BridgeMeshes.tsx` — the single `BridgeMesh` component was generalized to
+  `MeshBuffer` (same position/normal/index buffer wiring, now shared by both the deck and the
+  optional rail), rendering an extra `<mesh>` per bridge for its rail (using the fixed
+  `ACCESSORY_COLOR` re-exported from `bridge-boundaries.ts`, not the deck's road-class color)
+  when one was built.
+- `tests/bridge-live-wiring.test.ts`'s solvable-bridge case updated: it previously asserted
+  `data.structures` is empty for a published bridge (true before B4); now asserts every
+  `data.structures` entry is a small (< 1m) box — B4's own accessory posts, never the old
+  large box-bridge deck/rail/post geometry — and that at least one exists, plus that the
+  bridge's `rail` field is non-null.
+
+**Named scope reduction, stated plainly (not silently skipped):** piers ("place optional piers
+below the deck underside, with terrain samples at each support location") were **not built**.
+`BridgeSurface` retains only the finished road-top height at each sample, not the raw ground
+height B2 measured while solving (it only ever needed the *maximum* ground under the span to
+size the deck's constant clearance) — and `bridgeAccessories`' own plan-specified signature
+`(edges, surfaces, cap)` has no `sampleGround` callback to query it live either. Building real
+piers needs one of: retaining ground height per sample during B2's solve (a small, surgical
+follow-up — the data already flows through `solveOneBridge`, just isn't kept), or threading a
+live terrain callback through `bridgeAccessories` (a signature change the plan doesn't call
+for). Flagged for a focused follow-up, not attempted here — a published bridge today has decks,
+rails and posts, but no piers underneath, same honest gap style as B3's own "not built" list.
+
+**Test-fixture scope note:** the plan's own B4 bullet also asks for T/Y-entrance,
+bridge-to-bridge-junction and crossing-road-underneath fixtures. Checked directly against this
+codebase's B2 before writing tests: none of those states ever reach a published `BridgeSurface`
+— a junction encountered before an approach's transition completes rejects the whole component,
+and `BridgeSurface.openings` is always `[]` (mid-span branch openings are not modeled at all,
+per bridge-profile.ts's own doc comment). Building fixtures for unreachable states would be
+either untestable no-ops or fictions about behavior that doesn't exist, so they were not added;
+the one adjacent, genuinely reachable case — two bridge edges B1 joins end-to-end through a
+shared node, published as one continuous surface — is covered instead (see above).
+
+**Commands/results:** `pnpm exec vitest run tests/bridge-boundaries.test.ts` — 11/11 (all
+passed on the first real run, after hand-reasoning the expected arithmetic before writing the
+implementation, same discipline as prior B1/B2/B3 sessions). `pnpm exec vitest run
+tests/bridge-mesh.test.ts` — 14/14 (8 pre-existing `buildBridgeMesh` + 6 new `buildRailMesh`,
+also first-run green). Full `pnpm exec vitest run` — **121/121** passed (99 baseline + 5 B3 +
+17 B4). `pnpm exec tsc -b` — clean. `pnpm build` — clean, no new warnings beyond the
+pre-existing chunk-size notice.
+
+**Browser evidence (real, not skipped):** same environment/discipline as the B3 entry above —
+`pnpm dev`, two throwaway diagnostics (`tests/browser/bridge-accessories-check.mjs` and
+`-zoom.mjs`, built and deleted after use) against the live Gamla Stan preset. Plain (non-
+instanced) mesh count went from **9 (B3 only) to 18** — exactly 9 decks + 9 rails, confirming
+**every** published bridge's rail fit within the Balanced-tier 25k-triangle budget (none
+dropped). Zero console/page errors. A close-up screenshot (zoom 19, pitch 55, bearing 20,
+camera aimed at a bridge crossing identified from the overview shot) shows a continuous top
+rail with clearly visible, evenly-spaced vertical posts along both edges of a real published
+bridge deck — matches the intended design exactly, not merely "some geometry rendered."
+Screenshots saved under `.artifacts/bridge-accessories-check/` (gitignored, not committed).
+
+**Not built (named, not silently skipped):**
+- Piers (see above — needs retained ground-height data or a live sampleGround callback, neither
+  of which exists at this layer yet).
+- Z3's 2D-layer masking (still open from the B3 entry, unaffected by B4).
+- B5's full verification protocol (multi-city/zoom/bearing/pitch/DPR/terrain matrix,
+  0.02m-continuity sampled-position walk, performance-regression comparison) — untouched.
+- Any change to the 9/76 solve-rate ceiling — out of scope for this task.
+
+**Next action:** piers are the one clearly-scoped remaining B4 bullet; recommend retaining
+per-sample ground height in B2's solve as the smaller, more natural fix over adding a live
+terrain callback to `bridgeAccessories`. After that, B5 (full connectivity/visual/performance
+verification) is the next task with no unresolved prerequisite gap for the bridges that already
+publish — though it remains a large, separate undertaking (the multi-city screenshot/sampling
+matrix alone), not something to fold into a future task's scope by default.
+
+## 2026-09-12 — B4 piers: ground height retained in B2, piers landed; screenshot evidence weaker than prior entries
+
+**Task:** the one remaining B4 bullet flagged as "not built" in the entry above — piers — picked
+up directly ("continue"), following that entry's own recommendation to retain per-sample ground
+height in B2's solve rather than add a live terrain callback to `bridgeAccessories`.
+
+**Built and unit-tested:**
+- `src/world/bridge-model.ts`: `ProfileSample` gained an optional `ground?: number` field,
+  documented as set only for samples under the deck's own span (approach/ramp samples are an
+  interpolated smoothstep curve, never a measured height, so it stays `undefined` there).
+- `src/world/bridge-profile.ts`: `solveOneBridge`'s existing per-stop ground scan under the deck
+  (previously used only to compute `maxGround` for the deck-height formula, then discarded) now
+  retains each stop's own `ground` value and carries it through `RawSample` and `withOffsets`
+  into the final `ProfileSample`s. No behavior change to the deck-height/clearance formula
+  itself — purely additive. 1 new test in `tests/bridge-profile.test.ts` (now 21/21): confirms
+  deck samples carry the real measured ground value and approach samples do not.
+- `src/world/bridge-boundaries.ts`: `bridgeAccessories` now also places round piers
+  (`piersForSurface`, cylinder-kind `StructurePart`s) under each surface's deck-only samples
+  (`ground !== undefined`), spaced like `structures.ts`'s existing box-bridge piers (2-9
+  columns, ~one per 38m of span, gated off entirely below a 12m span), each snapped to its
+  nearest deck sample (ground is only known at sample points, never interpolated between them),
+  omitted when height would be negligible (< 0.5m) — matching the plan's own "omit supports
+  when ground is unknown or height is negligible" line for both cases. Posts and piers now
+  share **one combined cap** (read literally from the plan's "allocate optional supports/posts
+  deterministically within 500 instances" grouping them together), checked before every
+  insertion exactly like posts already were. 5 new tests in `tests/bridge-boundaries.test.ts`
+  (now 16/16): exact pier height/position math from a real ground/deck gap, the 12m span gate,
+  the negligible-height omission, no piers when ground was never retained, and the shared cap
+  actually splitting its budget between posts and piers rather than starving one.
+- `tests/bridge-live-wiring.test.ts`'s solvable-bridge assertion updated again: now also expects
+  at least one `kind: "cylinder"` entry (a pier) alongside the `kind: "box"` posts, both still
+  far smaller than the old box-bridge's tens-of-meters deck.
+
+**Not implemented, named per the plan's own text rather than silently dropped:** "exclude piers
+from lower road/path footprints plus 0.5m clearance" and "avoid blocking navigable-looking water
+channels by default" both need polygon/water geometry this module has no access to —
+`BridgeSurface` carries none, and threading it in would mean a real signature/data-flow change,
+not a parameter tweak. A pier can in principle land inside a lower road's own footprint or in a
+boat channel today; this is a known, stated gap, not an oversight.
+
+**Commands/results:** `pnpm exec vitest run tests/bridge-profile.test.ts` — 21/21. `pnpm exec
+vitest run tests/bridge-boundaries.test.ts` — 16/16. Full `pnpm exec vitest run` — **127/127**
+(122 baseline + 1 B2 + 5 B4-pier tests, with 1 pre-existing B3 integration assertion updated in
+place rather than counted as new). `pnpm exec tsc -b` — clean. `pnpm build` — clean, no new
+warnings.
+
+**Browser evidence — weaker than the B3/B4-rails entries above, stated plainly rather than
+rounded up:** same `pnpm dev` + throwaway-diagnostic discipline. A scene-graph check found a
+non-zero cylinder-`InstancedMesh` count (94, alongside the separate tree-trunk and bench-bin
+cylinder groups already expected at this preset) and zero console/page errors — consistent with
+piers existing in the live scene, but not visually confirmed the way B3's ramp screenshot or
+B4's rail/post close-up were: two close-up camera attempts at different pitch/bearing combinations
+around the same bridge used for those earlier screenshots did not land a clean, unobstructed view
+of a pier (the first was too far back to resolve anything at pier scale; the second's chosen
+bearing put a building directly in the foreground). Rather than keep spending browser-check
+cycles hunting for a better angle, this entry relies on the precise unit-level arithmetic
+(exact height/position/threshold assertions above) plus the non-zero instance count and clean
+console as its evidence, and says so directly instead of implying a screenshot confirmed
+something it didn't.
+
+**Not built:** the two named-but-unimplemented pier constraints above; Z3's masking and B5's
+full verification protocol remain open from prior entries, unaffected by this task.
+
+**Next action:** B4's plan text is now fully covered (railings, posts, piers, budgets) with the
+two explicitly named polygon-data gaps left open. B5 (full connectivity/visual/performance
+verification) is the next task with no unresolved prerequisite gap for the bridges that already
+publish, and would also be the natural place to get a real, unambiguous pier screenshot as part
+of its own required multi-city/zoom/bearing screenshot matrix rather than as an ad hoc diagnostic.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.

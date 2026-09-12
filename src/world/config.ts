@@ -263,9 +263,13 @@ export function daylight(hour: number): Daylight {
   };
 }
 export const QUALITY = {
-  eco: { dpr: 1, trees: 500, radius: 850, cache: 80 },
-  balanced: { dpr: 1.5, trees: 1800, radius: 1250, cache: 140 },
-  high: { dpr: 2, trees: 3600, radius: 1800, cache: 220 },
+  // bridgeTriangles: B4's plan-stated ceiling on combined published bridge
+  // deck + rail triangles per view (see bridge-boundaries.ts). Well under an
+  // 8 MiB buffer budget for any of these tiers at typical vertex counts, so
+  // no separate byte check is needed.
+  eco: { dpr: 1, trees: 500, radius: 850, cache: 80, bridgeTriangles: 10000 },
+  balanced: { dpr: 1.5, trees: 1800, radius: 1250, cache: 140, bridgeTriangles: 25000 },
+  high: { dpr: 2, trees: 3600, radius: 1800, cache: 220, bridgeTriangles: 50000 },
 } as const;
 export function parseConfig(raw: string): WorldConfig {
   const v = JSON.parse(raw);

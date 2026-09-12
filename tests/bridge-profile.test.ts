@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { solveBridge } from "../src/world/bridge-profile";
+import {
+  solveBridge,
+  solveBridges,
+  defaultMaxGradeForEdge,
+  DEFAULT_MAX_APPROACH,
+} from "../src/world/bridge-profile";
 import { buildRoadGraph } from "../src/world/road-topology";
 import type { ProfileSample, RoadGraph, Vec3 } from "../src/world/bridge-model";
 import { ORIGIN, metersLine, roadFeature } from "./fixtures/bridge-network";
@@ -184,6 +189,23 @@ describe("solveBridge", () => {
     expect(deckHeight).toBeCloseTo(bumpHeight + 2, 5);
   });
 
+  it("retains real per-point ground height for deck samples, but not for approach ramp samples (B4 piers need this)", () => {
+    const groundFn = (point: Vec3): number => (point[0] >= 100 && point[0] <= 200 ? 3 : 0);
+    const graph = flatGraph([100, 200], 100);
+    const solution = solveBridge(graph, groundFn, { terrain: true, maxGrade: READY_MAX_GRADE, maxApproach: 250 });
+    expect(solution.status).toBe("ready");
+    if (solution.status !== "ready") return;
+    const samples = solution.surfaces[0].samples;
+    const deckSamples = samples.filter((s) => s.ground !== undefined);
+    expect(deckSamples.length).toBeGreaterThan(0);
+    for (const s of deckSamples) expect(s.ground).toBeCloseTo(3, 5);
+    // The far approach anchor (true ground, away from the deck) never had
+    // per-point ground retained: only a coarse smoothstep curve, not a
+    // measured height, exists at every point along the ramp.
+    expect(samples[0].center[1]).toBeCloseTo(0, 5);
+    expect(samples[0].ground).toBeUndefined();
+  });
+
   it("stays finite over wavy ground (terrain bumps) without producing NaN/Infinity", () => {
     const wavyGround = (point: Vec3): number => 2 * Math.sin(point[0] / 15);
     const graph = flatGraph([100, 200], 150);
@@ -329,5 +351,88 @@ describe("solveBridge", () => {
     if (solution.status !== "ready") return;
     const deckHeight = Math.max(...solution.surfaces[0].samples.map((s) => s.center[1]));
     expect(deckHeight).toBeCloseTo(4.5, 5); // GRADE_SEPARATION_CLEARANCE_MAJOR
+  });
+});
+
+describe("solveBridges", () => {
+  // Two independent, geographically separate bridge components in one graph:
+  // one with ample approaches (would solve alone), one whose approach is too
+  // short (would fail alone). solveBridge()'s own short-circuit loop would
+  // return only the first-hit failure and discard the other component's
+  // result entirely — this is exactly the live-wiring gap solveBridges()
+  // exists to fix (see IDEAS_WORK_LOG.md's B3 diagnostic entries).
+  function twoComponentGraph() {
+    const readyBridge = roadFeature({
+      coordinates: metersLine([[100, 0], [200, 0]]),
+      layer: 1,
+      brunnel: "bridge",
+      id: "ready-bridge",
+    });
+    const readyWest = roadFeature({ coordinates: metersLine([[0, 0], [100, 0]]), id: "ready-west" });
+    const readyEast = roadFeature({ coordinates: metersLine([[200, 0], [300, 0]]), id: "ready-east" });
+
+    const failingBridge = roadFeature({
+      coordinates: metersLine([[5100, 0], [5200, 0]]),
+      layer: 1,
+      brunnel: "bridge",
+      id: "failing-bridge",
+    });
+    // Only 5m of approach on each side — nowhere near the ~20m required rise.
+    const failingWest = roadFeature({ coordinates: metersLine([[5095, 0], [5100, 0]]), id: "failing-west" });
+    const failingEast = roadFeature({ coordinates: metersLine([[5200, 0], [5205, 0]]), id: "failing-east" });
+
+    return buildRoadGraph(
+      [readyWest, readyBridge, readyEast, failingWest, failingBridge, failingEast],
+      ORIGIN,
+    );
+  }
+
+  it("publishes the solvable component instead of letting the failing one suppress it", () => {
+    const graph = twoComponentGraph();
+    const result = solveBridges(graph, NEVER_SAMPLE, {
+      terrain: false,
+      maxGrade: READY_MAX_GRADE,
+      maxApproach: 250,
+    });
+    expect(result.surfaces).toHaveLength(1);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].status).toBe("infeasible");
+    expect(result.rejected[0].reason).toMatch(/too short/);
+    expect(typeof result.rejected[0].edgeId).toBe("string");
+  });
+
+  it("resolves a per-edge maxGrade function instead of one shared constant", () => {
+    // A width-3 (path-class fallback) bridge gets the 12% path grade; a
+    // width-14 (major-class fallback) bridge gets the 8% motor-road grade —
+    // both from the same defaultMaxGradeForEdge selector in one call.
+    const pathBridge = roadFeature({
+      coordinates: metersLine([[100, 0], [110, 0]]),
+      layer: 1,
+      brunnel: "bridge",
+      class: "path",
+      width: 3,
+      id: "path-bridge",
+    });
+    const pathWest = roadFeature({ coordinates: metersLine([[85, 0], [100, 0]]), width: 3, id: "path-west" });
+    const pathEast = roadFeature({ coordinates: metersLine([[110, 0], [125, 0]]), width: 3, id: "path-east" });
+    const graph = buildRoadGraph([pathWest, pathBridge, pathEast], ORIGIN);
+    const result = solveBridges(graph, NEVER_SAMPLE, {
+      terrain: false,
+      maxGrade: defaultMaxGradeForEdge,
+      maxApproach: DEFAULT_MAX_APPROACH,
+    });
+    expect(result.surfaces).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+  });
+
+  it("returns an empty result for a graph with no bridge edges", () => {
+    const road = roadFeature({ coordinates: metersLine([[0, 0], [100, 0]]), id: "plain" });
+    const graph = buildRoadGraph([road], ORIGIN);
+    const result = solveBridges(graph, NEVER_SAMPLE, {
+      terrain: false,
+      maxGrade: READY_MAX_GRADE,
+      maxApproach: 250,
+    });
+    expect(result).toEqual({ surfaces: [], rejected: [] });
   });
 });

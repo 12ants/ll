@@ -6,6 +6,7 @@ import { Color, InstancedMesh, Object3D } from "three";
 import type { Detail, WorldDetails } from "./details-data";
 import { QUALITY, daylight, type WorldConfig } from "./config";
 import type { StructurePart } from "./structures";
+import { BridgeMeshes } from "./BridgeMeshes";
 const PerformanceSampler = lazy(() =>
   import("../components/PerformanceMonitor").then((m) => ({
     default: m.PerformanceSampler,
@@ -212,6 +213,7 @@ export function Details({
       />
       <Structures parts={structuresByGeometry.box} geometry="box" />
       <Structures parts={structuresByGeometry.cylinder} geometry="cylinder" />
+      <BridgeMeshes entries={data.bridges} />
       <Instances data={data.trees} kind="canopy" />
       <Instances data={data.trees} kind="trunk" />
       <Instances data={data.benches} kind="seat" />

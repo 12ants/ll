@@ -121,12 +121,60 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       **This closes the B1 parameter-tuning avenue**: 9/76 is the measured
       ceiling without a bigger design change (e.g. fragment-aware stitching
       that widens tolerance only between bridge fragments, never at an
-      approach edge's own two endpoints — flagged, not attempted). Live
-      wiring still not attempted. Needs the user's decision: accept 9/76 and
-      build B3's live wiring now with the plan's required fallback path
-      (better-supported now that the quick wins didn't pan out), or scope
-      fragment-aware stitching as its own task first.
-- [ ] B4 — Exposed-edge railings, supports and strict budgets.
+      approach edge's own two endpoints — flagged, not attempted).
+      **Reduced-scope live wiring landed 2026-09-12** (see work log): the
+      plan's own dependency table lists Z3 for B3, specifically for masking
+      the 2D `roads`/`bridges` style layers — Z3 remains unwired (only
+      `roadFootprint` exists, zero call sites), so that masking/depth-bias
+      piece was deliberately deferred, not built. What *was* built and
+      browser-verified: `solveBridges()` (per-component solving, fixing a
+      real gap where `solveBridge()`'s first-failure short-circuit would have
+      suppressed all 9 ready bridges behind whichever of the other 67 failed
+      first), live graph/solve/mesh wiring in `details-data.ts`, a new
+      `BridgeMeshes.tsx` R3F renderer, and fallback ownership in
+      `structures.ts` so a published bridge's old box/rails/posts/piers are
+      skipped (geometry-proximity matched, not exact edge-id traceability —
+      B1's graph can split/join raw lines, so there's no direct mapping).
+      Measured live at Gamla Stan: **9 of 9 predicted-ready bridges actually
+      publish** in the running app, with continuous ramped decks visibly
+      replacing the old disconnected floating box. Not built: B4's railings
+      (a published bridge currently has a bare deck, no rails — the old
+      box's rails are correctly suppressed for it, so this is a visible gap,
+      not a hidden one), Z3's masking (named seam risk at ramp-to-ground
+      anchors, browser-checked as non-disqualifying but not eliminated), and
+      B5's full verification protocol (multi-city/zoom/bearing/pitch/DPR/
+      terrain matrix) — none of B5 was attempted.
+- [ ] B4 — Exposed-edge railings, supports and strict budgets. **Railings and
+      posts landed and browser-verified 2026-09-12** (see work log):
+      `bridge-boundaries.ts`'s `exposedBridgeEdges`/`bridgeAccessories`
+      (opening-clipped railing boundaries, 8m-spaced posts, 500-instance
+      cap) and `bridge-mesh.ts`'s `buildRailMesh` (sloped rail-bar mesh
+      strips, since a yaw-only `StructurePart` can't tilt with a ramp), wired
+      into `details-data.ts`/`BridgeMeshes.tsx` with a per-quality-tier
+      triangle budget (`QUALITY[...].bridgeTriangles`, Eco 10k/Balanced
+      25k/High 50k) that drops a bridge's optional rail before ever touching
+      its mandatory deck. All 9 previously-published Gamla Stan bridges kept
+      both deck and rail (18 plain meshes measured, exactly 9x2, none
+      dropped). Browser close-up confirms a continuous rail with evenly
+      spaced posts on a real published bridge. **Piers landed 2026-09-12**
+      (see work log): `bridge-model.ts`'s `ProfileSample` gained an optional
+      `ground` field, populated in `bridge-profile.ts`'s solve for deck-only
+      samples (never approach/ramp samples, which are an interpolated curve,
+      not a measured height); `bridge-boundaries.ts`'s `bridgeAccessories`
+      places round piers under each surface's deck span (2-9 columns per
+      ~38m, gated off below 12m spans, omitted when negligible height),
+      sharing one combined 500-instance cap with posts. Full suite 127/127,
+      clean build. **Browser evidence weaker here than for rails/posts**: a
+      non-zero pier-cylinder instance count and zero console errors were
+      confirmed, but two close-up screenshot attempts did not land a clean,
+      unobstructed view of an actual pier (stated directly in the work log
+      rather than implied) — B5's own screenshot matrix is the natural place
+      to get an unambiguous shot. **Two constraints from the plan's own B4
+      text remain unimplemented, named rather than silently dropped**:
+      excluding piers from lower road/path footprints, and avoiding
+      navigable-looking water channels — both need polygon/water geometry
+      this module has no access to. Z3's masking and B5's full verification
+      protocol remain open from B3, unaffected by this task.
 - [ ] B5 — Connectivity, visual and performance acceptance.
 
 ## Tracking rules
