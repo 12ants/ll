@@ -168,13 +168,76 @@ function insertSplits(segment: RawSegment, splits: readonly SplitPoint[]): RawSe
  * interior within SNAP_DISTANCE (a T approach) — never at a mere interior 2D
  * crossing, since only endpoints are ever compared against another line.
  */
+/**
+ * Uniform grid over segment geometry, so a T-junction search compares an
+ * endpoint only against segments that could plausibly be within
+ * `SNAP_DISTANCE` of it.
+ *
+ * Without this the search is O(segments^2 x polyline length): every endpoint
+ * is projected onto every other segment. Measured on the committed Amsterdam
+ * fixture at z14 (10,884 edges) that was 109.5 s of a 111.2 s collection —
+ * 98.5% of the whole pass, and the reason a dense view stalled the main
+ * thread for minutes.
+ *
+ * Cells are 8 m and each segment is rasterised along its own length at 4 m
+ * steps, so any point of a segment lies within 4 m of one of its samples.
+ * A candidate genuinely within 0.5 m of an endpoint therefore always has a
+ * sample in the endpoint's own cell or one of its eight neighbours, which is
+ * exactly what `candidatesNear` scans. Pruning is conservative: it only ever
+ * discards segments that cannot satisfy the distance test, so the resulting
+ * splits are identical to the exhaustive search.
+ */
+const TJUNCTION_CELL_SIZE = 8; // meters
+
+function cellKey(x: number, z: number): string {
+  return `${Math.floor(x / TJUNCTION_CELL_SIZE)},${Math.floor(z / TJUNCTION_CELL_SIZE)}`;
+}
+
+function buildSegmentIndex(segments: readonly RawSegment[]): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  const step = TJUNCTION_CELL_SIZE / 2;
+  for (let j = 0; j < segments.length; j++) {
+    const points = segments[j].points;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i],
+        b = points[i + 1];
+      const dx = b[0] - a[0],
+        dz = b[2] - a[2];
+      const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / step));
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const key = cellKey(a[0] + dx * t, a[2] + dz * t);
+        const list = index.get(key);
+        // Indices arrive contiguously per segment, so comparing against the
+        // tail is enough to keep each cell's list free of repeats.
+        if (!list) index.set(key, [j]);
+        else if (list[list.length - 1] !== j) list.push(j);
+      }
+    }
+  }
+  return index;
+}
+
+function candidatesNear(index: Map<string, number[]>, point: Vec3): Set<number> {
+  const cx = Math.floor(point[0] / TJUNCTION_CELL_SIZE),
+    cz = Math.floor(point[2] / TJUNCTION_CELL_SIZE);
+  const out = new Set<number>();
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dz = -1; dz <= 1; dz++) {
+      const list = index.get(`${cx + dx},${cz + dz}`);
+      if (list) for (const j of list) out.add(j);
+    }
+  return out;
+}
+
 function applyTJunctionSplits(segments: readonly RawSegment[]): RawSegment[] {
   const splitsPerSegment = new Map<number, SplitPoint[]>();
+  const index = buildSegmentIndex(segments);
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
     const endpoints = [s.points[0], s.points[s.points.length - 1]];
     for (const endpoint of endpoints) {
-      for (let j = 0; j < segments.length; j++) {
+      for (const j of candidatesNear(index, endpoint)) {
         if (i === j) continue;
         const t = segments[j];
         const proj = projectOntoPolyline(endpoint, t.points);
@@ -200,6 +263,12 @@ interface Cluster {
   points: Vec3[];
   layer: number;
   bridge: boolean;
+  /** Insertion order, so grid lookups can be restored to `clusters` order. */
+  seq: number;
+  /** Cached `centroid(points)`, refreshed on every mutation. */
+  center: Vec3;
+  /** Grid cell the cached centroid currently falls in. */
+  cell: string;
 }
 function centroid(points: readonly Vec3[]): Vec3 {
   let x = 0,
@@ -299,21 +368,79 @@ export function buildRoadGraph(
 
   const clusters: Cluster[] = [];
   let nodeCounter = 0;
+  // Endpoint clustering was the second quadratic stage: scanning every
+  // cluster for every endpoint, recomputing each cluster's centroid on each
+  // comparison. Measured on the Amsterdam z14 fixture that is ~10k clusters
+  // against ~22k endpoints. The same uniform-grid treatment as
+  // applyTJunctionSplits applies, with two details that keep the result
+  // byte-identical to the exhaustive scan:
+  //
+  //  - matches are re-sorted into cluster insertion order, because the first
+  //    match becomes the surviving cluster and therefore decides node ids;
+  //  - the centroid is cached by calling the same `centroid()` helper after
+  //    each mutation rather than maintained as a running sum, so no addition
+  //    is re-associated and no distance lands differently at the boundary.
+  //    Clusters hold a handful of points, so recomputing is trivial.
+  const clusterCellSize = Math.max(SNAP_DISTANCE, 1);
+  const clusterCell = (p: Vec3): string =>
+    `${Math.floor(p[0] / clusterCellSize)},${Math.floor(p[2] / clusterCellSize)}`;
+  const clusterGrid = new Map<string, Cluster[]>();
+  const gridAdd = (c: Cluster): void => {
+    const list = clusterGrid.get(c.cell);
+    if (list) list.push(c);
+    else clusterGrid.set(c.cell, [c]);
+  };
+  const gridRemove = (c: Cluster): void => {
+    const list = clusterGrid.get(c.cell);
+    const at = list?.indexOf(c) ?? -1;
+    if (list && at >= 0) list.splice(at, 1);
+  };
+  const refresh = (c: Cluster): void => {
+    c.center = centroid(c.points);
+    const cell = clusterCell(c.center);
+    if (cell === c.cell) return;
+    gridRemove(c);
+    c.cell = cell;
+    gridAdd(c);
+  };
+
   function clusterFor(point: Vec3, layer: number, bridge: boolean): Cluster {
-    const matches = clusters.filter(
-      (c) =>
-        dist(centroid(c.points), point) <= SNAP_DISTANCE &&
-        layersCompatible(c.layer, layer, c.bridge, bridge),
-    );
+    const cx = Math.floor(point[0] / clusterCellSize),
+      cz = Math.floor(point[2] / clusterCellSize);
+    // Cells are at least SNAP_DISTANCE across, so any centroid within
+    // SNAP_DISTANCE of `point` lies in its cell or one of the eight around it.
+    const matches: Cluster[] = [];
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dz = -1; dz <= 1; dz++) {
+        const list = clusterGrid.get(`${cx + dx},${cz + dz}`);
+        if (!list) continue;
+        for (const c of list)
+          if (
+            dist(c.center, point) <= SNAP_DISTANCE &&
+            layersCompatible(c.layer, layer, c.bridge, bridge)
+          )
+            matches.push(c);
+      }
     if (matches.length === 0) {
-      const created: Cluster = { id: `n${nodeCounter++}`, points: [point], layer, bridge };
+      const created: Cluster = {
+        id: `n${nodeCounter++}`,
+        points: [point],
+        layer,
+        bridge,
+        seq: nodeCounter,
+        center: point,
+        cell: clusterCell(point),
+      };
       clusters.push(created);
+      gridAdd(created);
       return created;
     }
+    matches.sort((a, b) => a.seq - b.seq);
     const [primary, ...rest] = matches;
     for (const m of rest) {
       primary.points.push(...m.points);
       clusters.splice(clusters.indexOf(m), 1);
+      gridRemove(m);
       // A BuiltEdge created before this merge may already hold a direct
       // reference to `m`. Retarget its identity in place (rather than just
       // discarding it) so that a later `.id` read through that stale
@@ -321,6 +448,7 @@ export function buildRoadGraph(
       m.id = primary.id;
     }
     primary.points.push(point);
+    refresh(primary);
     return primary;
   }
 

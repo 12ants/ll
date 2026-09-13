@@ -178,6 +178,53 @@ function deckProfileFor(surface: BridgeSurface): DeckProfile {
   return nearest <= DECK_PROFILE_DISTANCE ? "full" : "slab";
 }
 
+/**
+ * Uniform bucket grid over axis-aligned boxes.
+ *
+ * The scatter rejects a candidate tree if it falls inside a water/building
+ * polygon or within a road's exclusion radius. Both tests were linear scans
+ * over everything in view, run per candidate — up to 12,000 candidates
+ * against thousands of polygons and (at Amsterdam z14) more than ten
+ * thousand road segments. Bucketing turns each into a lookup of the handful
+ * of boxes overlapping the candidate's own cell.
+ *
+ * A box spanning an implausible number of cells (a water polygon covering
+ * the whole view) goes to an overflow list that is always scanned, so one
+ * huge feature cannot blow the index up.
+ */
+function boxGrid<T>(
+  items: readonly T[],
+  cell: number,
+  box: (item: T) => [number, number, number, number],
+): (x: number, y: number) => readonly T[] {
+  const MAX_CELLS_PER_ITEM = 64;
+  const buckets = new Map<string, T[]>();
+  const oversized: T[] = [];
+  for (const item of items) {
+    const [minX, minY, maxX, maxY] = box(item);
+    const x0 = Math.floor(minX / cell),
+      x1 = Math.floor(maxX / cell),
+      y0 = Math.floor(minY / cell),
+      y1 = Math.floor(maxY / cell);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > MAX_CELLS_PER_ITEM) {
+      oversized.push(item);
+      continue;
+    }
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++) {
+        const key = `${x},${y}`;
+        const list = buckets.get(key);
+        if (list) list.push(item);
+        else buckets.set(key, [item]);
+      }
+  }
+  return (x, y) => {
+    const list = buckets.get(`${Math.floor(x / cell)},${Math.floor(y / cell)}`);
+    if (!list) return oversized;
+    return oversized.length ? [...list, ...oversized] : list;
+  };
+}
+
 /** A bounded enrichment pass, run after tile loading/movement, never per frame. */
 export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
   const center = map.getCenter(),
@@ -284,6 +331,15 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
           })),
       );
     });
+  // Obstacle boxes are in lng/lat (the scatter tests raw coordinates), road
+  // boxes in local meters, so each gets its own grid at its own scale.
+  const obstaclesNear = boxGrid(obstacles, 0.002, (p) => [p.minX, p.minY, p.maxX, p.maxY]);
+  const roadsNear = boxGrid(roads, 60, ({ a, b, radius }) => [
+    Math.min(a[0], b[0]) - radius,
+    Math.min(a[2], b[2]) - radius,
+    Math.max(a[0], b[0]) + radius,
+    Math.max(a[2], b[2]) + radius,
+  ]);
   let attempts = 0;
   const parks = all.filter(
     (f) =>
@@ -323,7 +379,7 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
           pos = localMeters(point, origin);
         if (
           Math.hypot(pos[0], pos[2]) > budget.radius ||
-          obstacles.some(
+          obstaclesNear(point[0], point[1]).some(
             (p) =>
               point[0] >= p.minX &&
               point[0] <= p.maxX &&
@@ -344,7 +400,7 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
         )
           continue;
         if (
-          roads.some(({ a, b, radius }) => {
+          roadsNear(pos[0], pos[2]).some(({ a, b, radius }) => {
             if (
               pos[0] < Math.min(a[0], b[0]) - radius ||
               pos[0] > Math.max(a[0], b[0]) + radius ||

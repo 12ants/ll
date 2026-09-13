@@ -204,11 +204,13 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
 
 New plans, written from measured behaviour rather than assumption:
 
-- [ ] **Collection cost** — `collectDetails` measured at ~4.8 s (Gamla Stan z15),
-      ~19 s (Amsterdam z15) and **~131 s (Amsterdam z14)** on the main thread. This
-      blocks every other depth item: adding detail before fixing it makes the app
-      feel worse. Profile into phases, budget by *time* not only by count, then move
-      the pure stages to a worker. See [World depth](WORLD_DEPTH_PLAN.md).
+- [ ] **Collection cost** — **largely fixed 2026-09-13: ~131 s -> ~3.5 s at Amsterdam
+      z14, with byte-identical output.** Phase-profiling found `buildRoadGraph` at
+      98.5% of the pass; three quadratic scans (`applyTJunctionSplits`, `clusterFor`,
+      and the tree scatter's per-candidate obstacle/road tests) are now uniform bucket
+      grids. Remaining: 3.5 s is still not interactive and the cost is now spread
+      rather than concentrated, so the next steps are time-slicing and moving the pure
+      stages to a worker. See [World depth](WORLD_DEPTH_PLAN.md).
 - [ ] **Building shadows** — buildings are MapLibre `fill-extrusion` (`style.ts:252`)
       and so are absent from the three.js shadow pass entirely: nothing in the city
       casts a shadow on anything else. Invisible shadow-caster proxies are the

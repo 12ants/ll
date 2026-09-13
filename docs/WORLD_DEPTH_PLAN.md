@@ -9,33 +9,43 @@ grounded in what the code does today rather than in generic advice.
 Measured this session, timing the real `collectDetails` in the browser
 against the committed fixtures:
 
-| view | published bridges | collection |
-| --- | --- | --- |
-| Gamla Stan z15 | 11 | ~4.8 s |
-| Amsterdam z15 | 64 | ~19 s |
-| Amsterdam z14 | 250 | ~131 s |
+| view | published bridges | before | after (2026-09-13) |
+| --- | --- | --- | --- |
+| Gamla Stan z15 | 11 | ~4.8 s | **0.51 s** |
+| Amsterdam z15 | 64 | ~19 s | **1.25 s** |
+| Amsterdam z14 | 250 | ~131 s | **3.5 s** |
 
 `collectDetails` runs on the main thread, debounced 250 ms after tile load
-or camera stop (`details-data.ts`). At Amsterdam z14 it is a multi-second —
-in the worst case multi-minute — stall. **Adding detail before addressing
-this will make the app feel worse, not richer.** So item 1 is not a feature.
+or camera stop (`details-data.ts`). It was a multi-minute stall at the
+densest camera; three quadratic scans have since been removed (item 1).
+At 3.5 s it is no longer catastrophic but still not interactive, so the
+ordering below stands: **adding detail before finishing item 1 will make the
+app feel worse, not richer.**
 
-## 1. Make collection affordable (prerequisite)
+## 1. Make collection affordable (prerequisite) — largely DONE 2026-09-13
+
+Three quadratic scans were found by phase-profiling and replaced with uniform
+bucket grids: `applyTJunctionSplits` (endpoint against every segment),
+`clusterFor` (endpoint against every cluster, recomputing centroids), and the
+tree scatter's per-candidate `obstacles.some`/`roads.some`. Amsterdam z14 went
+from **~131 s to ~3.5 s** with byte-identical output. See the work log entry
+for the measurements and the argument for why the pruning is conservative.
+
+**What remains:** 3.5 s is still not interactive, and the cost is now spread
+across stages rather than concentrated in one, so the next step is (b) and (c)
+below rather than another hot-spot hunt.
 
 Three independent strands, in order of expected payoff:
 
-**a. Profile it properly.** One hoist has already been tried and did not
-move the number (a per-call `Map` rebuild in `walkApproachChain`, now
-cached). That failure is informative: the cost is elsewhere. Instrument
-`collectDetails` into phases — `queryRenderedFeatures`, `buildRoadGraph`,
-`solveBridges`, scatter, facades — and publish the split before optimising
-anything further.
+**a. Profile it properly.** DONE — the split is in the work log. It found
+`buildRoadGraph` at 98.5% of the pass, which no amount of reasoning about the
+bridge pipeline would have produced.
 
 **b. Budget by time, not only by count.** Every budget today is a count cap
 (trees, facade panes, bridge triangles). None of them bound *duration*. A
 time-sliced collector that yields after a few milliseconds and resumes on
-the next frame would turn a 131 s stall into progressive fill-in, which
-also looks better than a freeze followed by a pop.
+the next frame would turn the remaining multi-second pass into progressive
+fill-in, which also looks better than a freeze followed by a pop.
 
 **c. Move it off the main thread.** The geometry stages are pure functions
 over plain data (`bridge-profile`, `bridge-mesh`, `geography`), which is the
@@ -100,8 +110,9 @@ roughness (e.g. `BridgeMeshes.tsx:30`). Cheap improvements:
 
 ## Sequencing
 
-1. **Item 1** — profile and time-budget collection. Nothing else is safe
-   until a dense view is not a stall.
+1. **Item 1** — profiling and the quadratic fixes are done (131 s -> 3.5 s);
+   time-slicing and the worker split remain. Nothing else is safe until a
+   dense view is not a stall.
 2. **Item 2** — building shadows. Largest visual return once affordable.
 3. **Item 3** — facade texturing, which *reduces* cost while increasing
    coverage, so it pays for later items.

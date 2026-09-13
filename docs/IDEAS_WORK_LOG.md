@@ -2336,6 +2336,83 @@ settle cost above, and run the Amsterdam matrix block, which is the only one tha
 triangle budget (`rails < decks`). The matrix runner's `unmeasured[]` hardening is still
 unexecuted code in the tree.
 
+## 2026-09-13 — the collection stall, found and fixed
+
+**Status:** resolved. `collectDetails` at Amsterdam z14 went from ~131 s to ~3.5 s, with byte-identical
+output.
+
+### Found by phase-profiling, after a wrong guess
+
+The previous entry recorded a failed hypothesis (per-call node/edge map rebuilds in
+`walkApproachChain`) — hoisting them changed nothing. Rather than guess again, each stage of
+`collectDetails` was timed separately using the app's own exported functions, so the attribution
+could not drift from production. Amsterdam z14, before any fix:
+
+| phase | ms |
+| --- | --- |
+| **buildRoadGraph** | **109,515** |
+| build deck/rail/marking meshes | 533 |
+| map features to WorldFeature | 269 |
+| queryRenderedFeatures | 132 |
+| collectBridgeParts | 84 |
+| solveBridges | 76 |
+| bridgeAccessories / exposedBridgeEdges / facades | < 10 |
+
+`buildRoadGraph` was **98.5% of the pass**. Every bridge stage combined — solving, meshing,
+railings, markings — came to well under a second, so none of the recent bridge work was implicated.
+
+### Three quadratic scans, all the same shape
+
+1. **`applyTJunctionSplits`** projected every segment endpoint onto every other segment:
+   O(segments^2 x polyline length), ~10,900 edges at z14. `SNAP_DISTANCE` is only **0.5 m**, so
+   almost every comparison was between segments nowhere near each other.
+2. **`clusterFor`** scanned every existing cluster for every endpoint and recomputed
+   `centroid(c.points)` on each comparison — ~10k clusters against ~22k endpoints.
+3. **The tree scatter** ran `obstacles.some(...)` and `roads.some(...)` per candidate point, up to
+   12,000 candidates against thousands of polygons and >10,000 road segments.
+
+All three are now uniform bucket grids. Measured per stage at z14:
+`buildRoadGraph` 109,515 -> 43,407 (T-junction grid) -> **951 ms** (cluster grid); the scatter fix
+took the remaining total from 16,311 -> **3,599 ms**.
+
+### Keeping it provably identical
+
+Pruning is conservative everywhere — a candidate is skipped only when it cannot satisfy the
+distance test:
+
+- T-junction grid: 8 m cells, each segment rasterised along its own length at 4 m steps, so any
+  point of a segment is within 4 m of one of its samples; a candidate within 0.5 m of an endpoint
+  therefore always has a sample in the endpoint's cell or one of its eight neighbours.
+- Cluster grid: cells are at least `SNAP_DISTANCE` across, and matches are **re-sorted into cluster
+  insertion order** because the first match becomes the surviving cluster and so decides node ids.
+  The centroid is cached by re-calling the same `centroid()` helper after each mutation rather than
+  kept as a running sum, so no floating-point addition is re-associated and no distance lands
+  differently at the boundary.
+- Scatter grids: a box spanning an implausible number of cells (a water polygon covering the whole
+  view) goes to an overflow list that is always scanned, so one huge feature cannot blow up the
+  index.
+
+Verified identical rather than merely "tests still pass": the graph is **9,902 nodes / 10,884 edges
+/ 440 bridge edges** at z14 and **1,992 / 2,130 / 138** at z15, unchanged across every run before
+and after; and published output is unchanged at all three cameras (Gamla Stan z15 11 bridges /
+4,656 deck / 10,464 rail / 1,436 marking triangles; Amsterdam z14 250 bridges / 31,484 / 18,848 /
+0, with 203 rails and 250 marking sets dropped by the budget).
+
+### End-to-end
+
+| view | before | after |
+| --- | --- | --- |
+| Gamla Stan z15 | 5,434 ms | **510 ms** |
+| Amsterdam z15 | 9,896 ms | **1,250 ms** |
+| Amsterdam z14 | ~131,000 ms | **3,500 ms** |
+
+`pnpm test` 154/154, `tsc -b` clean, `vite build` clean.
+
+**Still open:** 3.5 s on the main thread at the densest camera is much better but not yet
+interactive. The remaining time is spread across stages rather than concentrated, so the next step
+is the time-slicing/worker work in `WORLD_DEPTH_PLAN.md` rather than another hot-spot hunt. Lane
+markings are still not visible at close range.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.
