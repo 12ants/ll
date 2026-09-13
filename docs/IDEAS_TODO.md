@@ -200,6 +200,25 @@ Complete Z1 and Z2 first because the road/bridge work shares dimensions and feat
       B5:** the full 12-zoom/4-bearing/3-pitch/2-DPR/2-terrain/3-city matrix, terrain-on
       (San Francisco/Chamonix) live-browser coverage, and a true pre-B1-B4 performance baseline.
 
+## Rendering depth and performance (2026-09-13)
+
+New plans, written from measured behaviour rather than assumption:
+
+- [ ] **Collection cost** — `collectDetails` measured at ~4.8 s (Gamla Stan z15),
+      ~19 s (Amsterdam z15) and **~131 s (Amsterdam z14)** on the main thread. This
+      blocks every other depth item: adding detail before fixing it makes the app
+      feel worse. Profile into phases, budget by *time* not only by count, then move
+      the pure stages to a worker. See [World depth](WORLD_DEPTH_PLAN.md).
+- [ ] **Building shadows** — buildings are MapLibre `fill-extrusion` (`style.ts:252`)
+      and so are absent from the three.js shadow pass entirely: nothing in the city
+      casts a shadow on anything else. Invisible shadow-caster proxies are the
+      unlock. See [Lighting and shadows](LIGHTING_AND_SHADOW_PLAN.md).
+- [ ] **Facade texturing** — every window pane is its own box instance against a hard
+      cap (500/2,600/6,000 by tier, nearest 200 buildings within 750 m), so most of
+      the city has bare walls and the code is dominated by rationing that budget.
+      Moving windows to a repeating texture removes the scarcity and *reduces* cost.
+      See [Facade optimization](FACADE_TEXTURE_OPTIMIZATION_PLAN.md).
+
 ## Tracking rules
 
 Append an entry to the work log for each completed task or failed acceptance gate: date, task ID, changed files, commands/results, artifact paths and next action. Keep unresolved data cases visible. A written test plan is not a passed test; screenshots alone do not establish connectivity. Check off tasks only after their unit/build checks and required browser evidence pass.

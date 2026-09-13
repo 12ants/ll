@@ -1,5 +1,5 @@
 import type { BridgeMeshData, BridgeSurface, ProfileSample, Vec3 } from "./bridge-model";
-import { RAIL_CENTER_OFFSET, RAIL_THICKNESS } from "./bridge-boundaries";
+import { RAIL_COURSES } from "./bridge-boundaries";
 
 /**
  * Builds one indexed deck mesh (top, underside and both side walls) from a
@@ -54,12 +54,48 @@ class MeshBuilder {
   indices: number[] = [];
 
   private pushTriangle(a: Vec3, b: Vec3, c: Vec3): void {
-    if (triangleArea(a, b, c) < DEGENERATE_AREA) return;
     const n = faceNormal(a, b, c);
+    this.pushTriangleShaded(a, b, c, n, n, n);
+  }
+
+  /**
+   * Same triangle, but each corner carries its own normal. Vertices are still
+   * not shared between triangles (see the file doc comment); smooth shading
+   * comes from adjacent triangles agreeing on the normal *at a shared
+   * position*, which is all the interpolator needs, and costs no change to
+   * triangle count or ordering.
+   */
+  private pushTriangleShaded(a: Vec3, b: Vec3, c: Vec3, na: Vec3, nb: Vec3, nc: Vec3): void {
+    if (triangleArea(a, b, c) < DEGENERATE_AREA) return;
     const base = this.positions.length / 3;
     this.positions.push(...a, ...b, ...c);
-    this.normals.push(...n, ...n, ...n);
+    this.normals.push(...na, ...nb, ...nc);
     this.indices.push(base, base + 1, base + 2);
+  }
+
+  /**
+   * A quad whose four corners carry their own normals, wound outward by the
+   * same computed rule as `quad`. `na..nd` correspond to `a..d`.
+   */
+  quadShaded(
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    d: Vec3,
+    na: Vec3,
+    nb: Vec3,
+    nc: Vec3,
+    nd: Vec3,
+    outward: Vec3,
+  ): void {
+    const n = faceNormal(a, b, c);
+    if (dot(n, outward) >= 0) {
+      this.pushTriangleShaded(a, b, c, na, nb, nc);
+      this.pushTriangleShaded(a, c, d, na, nc, nd);
+    } else {
+      this.pushTriangleShaded(a, c, b, na, nc, nb);
+      this.pushTriangleShaded(a, d, c, na, nd, nc);
+    }
   }
 
   /**
@@ -75,6 +111,22 @@ class MeshBuilder {
     } else {
       this.pushTriangle(a, c, b);
       this.pushTriangle(a, d, c);
+    }
+  }
+
+  /**
+   * Triangle fan closing an arbitrary cross-section ring, flat-shaded. Used
+   * for the end caps, whose ring is no longer a quad once the deck carries a
+   * kerb and crown.
+   */
+  fan(ring: readonly Vec3[], outward: Vec3): void {
+    for (let k = 1; k + 1 < ring.length; k++) {
+      const a = ring[0],
+        b = ring[k],
+        c = ring[k + 1];
+      const n = faceNormal(a, b, c);
+      if (dot(n, outward) >= 0) this.pushTriangle(a, b, c);
+      else this.pushTriangle(a, c, b);
     }
   }
 
@@ -98,61 +150,158 @@ function tangentAt(samples: readonly ProfileSample[], i: number): Vec3 {
   return normalize(sub(next, prev));
 }
 
-export function buildBridgeMesh(surface: BridgeSurface): BridgeMeshData {
+/** Face normal flipped, if needed, to agree with the face's outward direction. */
+function orientedNormal(a: Vec3, b: Vec3, c: Vec3, outward: Vec3): Vec3 {
+  const n = faceNormal(a, b, c);
+  return dot(n, outward) >= 0 ? n : [-n[0], -n[1], -n[2]];
+}
+
+function averageNormals(a: Vec3, b: Vec3): Vec3 {
+  const sum: Vec3 = [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  return length(sum) > 0 ? normalize(sum) : a;
+}
+
+/**
+ * Deck cross-section.
+ *
+ * A plain box reads as a slab, not as something a vehicle uses. A real road
+ * deck is crowned so water sheds to the edges, and is bounded by a raised
+ * kerb that the railing stands on. Both are generated *inward and below*
+ * `ProfileSample.left`/`right`, which keep meaning the outer deck edge — so
+ * `bridge-profile.ts` is untouched and `bridge-boundaries.ts` keeps placing
+ * railings on exactly that line, which is where a kerb-mounted railing goes.
+ */
+const KERB_HEIGHT = 0.15; // meters of upstand above the carriageway
+const KERB_WIDTH_FRACTION = 0.08; // of full deck width
+const MAX_KERB_WIDTH = 0.45; // meters; a wide motorway deck still gets a kerb, not a verge
+const CROSSFALL = 0.02; // 2%, the usual highway crown
+
+/** An ordered, closed cross-section ring. Face k spans ring[k] -> ring[k+1]. */
+type Ring = Vec3[];
+
+function lerp3(a: Vec3, b: Vec3, t: number): Vec3 {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+function raise(p: Vec3, dy: number): Vec3 {
+  return [p[0], p[1] + dy, p[2]];
+}
+
+/** Four faces: the original plain box, kept for distant decks. */
+function slabRing(s: ProfileSample, thickness: number): Ring {
+  return [s.left, s.right, lower(s.right, thickness), lower(s.left, thickness)];
+}
+
+/** Seven faces: kerb tops, crowned carriageway, fascias and underside. */
+function profiledRing(s: ProfileSample, thickness: number): Ring {
+  const width = Math.hypot(s.left[0] - s.right[0], s.left[2] - s.right[2]);
+  const kerbWidth = Math.min(MAX_KERB_WIDTH, width * KERB_WIDTH_FRACTION);
+  const inset = width > 0 ? kerbWidth / width : 0;
+  const carriagewayLeft = raise(lerp3(s.left, s.right, inset), -KERB_HEIGHT);
+  const carriagewayRight = raise(lerp3(s.right, s.left, inset), -KERB_HEIGHT);
+  // The crown rises back toward the kerb top by the crossfall over half the
+  // width, so the carriageway sheds outward rather than sitting dead flat.
+  const crown = raise(lerp3(s.left, s.right, 0.5), -KERB_HEIGHT + (width / 2) * CROSSFALL);
+  return [
+    s.left, // left kerb top == outer deck edge
+    carriagewayLeft, // foot of the left kerb
+    crown, // crowned centre of the carriageway
+    carriagewayRight, // foot of the right kerb
+    s.right, // right kerb top
+    lower(s.right, thickness),
+    lower(s.left, thickness),
+  ];
+}
+
+/** Outward direction of face k: away from the ring's own centroid. */
+function faceOutward(ring: Ring, k: number): Vec3 {
+  const a = ring[k],
+    b = ring[(k + 1) % ring.length];
+  let cx = 0,
+    cy = 0,
+    cz = 0;
+  for (const p of ring) {
+    cx += p[0];
+    cy += p[1];
+    cz += p[2];
+  }
+  const n = ring.length;
+  const d: Vec3 = [
+    (a[0] + b[0]) / 2 - cx / n,
+    (a[1] + b[1]) / 2 - cy / n,
+    (a[2] + b[2]) / 2 - cz / n,
+  ];
+  return length(d) > 0 ? normalize(d) : [0, 1, 0];
+}
+
+/**
+ * Level of detail for the deck cross-section. `"full"` is the profiled
+ * carriageway; `"slab"` is the original four-face box, for decks far enough
+ * away that a 15 cm kerb is well under a pixel. Chosen by the caller, which
+ * knows the camera — this module stays pure geometry.
+ */
+export type DeckProfile = "full" | "slab";
+
+export function buildBridgeMesh(
+  surface: BridgeSurface,
+  profile: DeckProfile = "full",
+): BridgeMeshData {
   const builder = new MeshBuilder();
   const samples = surface.samples;
   if (samples.length < 2) return builder.toMeshData();
 
-  const up: Vec3 = [0, 1, 0];
-  for (let i = 0; i < samples.length - 1; i++) {
-    const s0 = samples[i],
-      s1 = samples[i + 1];
-    const leftTop0 = s0.left,
-      rightTop0 = s0.right,
-      leftTop1 = s1.left,
-      rightTop1 = s1.right;
-    const leftBottom0 = lower(leftTop0, surface.thickness),
-      rightBottom0 = lower(rightTop0, surface.thickness),
-      leftBottom1 = lower(leftTop1, surface.thickness),
-      rightBottom1 = lower(rightTop1, surface.thickness);
+  const makeRing = profile === "full" ? profiledRing : slabRing;
+  const rings = samples.map((s) => makeRing(s, surface.thickness));
+  const faceCount = rings[0].length;
+  const segmentCount = samples.length - 1;
 
-    // Top: left[i], right[i], left[i+1], right[i+1] per the plan's own strip
-    // pattern, oriented up.
-    builder.quad(leftTop0, leftTop1, rightTop1, rightTop0, up);
-    // Underside, oriented down.
-    builder.quad(leftBottom0, leftBottom1, rightBottom1, rightBottom0, [0, -1, 0]);
+  // Pass 1: the outward normal of each face on each segment. A curved deck's
+  // faces turn segment to segment; a flat per-face normal is what makes that
+  // read as a chain of plates rather than a curve.
+  const segmentNormals: Vec3[][] = [];
+  for (let i = 0; i < segmentCount; i++) {
+    const a = rings[i],
+      b = rings[i + 1];
+    const faces: Vec3[] = new Array(faceCount);
+    for (let k = 0; k < faceCount; k++) {
+      const k1 = (k + 1) % faceCount;
+      faces[k] = orientedNormal(a[k], b[k], b[k1], faceOutward(a, k));
+    }
+    segmentNormals.push(faces);
+  }
 
-    // Side walls: outward is "away from the opposite rail," computed per
-    // quad rather than assumed, so a locally reversed left/right (a hairpin)
-    // still orients correctly instead of silently inverting.
-    const leftOutward = normalize(sub(leftTop0, rightTop0));
-    builder.quad(leftTop0, leftTop1, leftBottom1, leftBottom0, leftOutward);
-    const rightOutward = normalize(sub(rightTop0, leftTop0));
-    builder.quad(rightTop0, rightBottom0, rightBottom1, rightTop1, rightOutward);
+  // Pass 2: at each sample, a face's normal is the mean of the segments
+  // meeting there, so shading runs continuously along the deck. Normals are
+  // averaged only along the run, never across the section — every edge of the
+  // cross-section (kerb, crown, fascia) stays a hard crease instead of
+  // smearing the carriageway into the side of the deck.
+  const sampleNormals: Vec3[][] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const before = segmentNormals[Math.max(0, Math.min(i - 1, segmentCount - 1))];
+    const after = segmentNormals[Math.max(0, Math.min(i, segmentCount - 1))];
+    const faces: Vec3[] = new Array(faceCount);
+    for (let f = 0; f < faceCount; f++) faces[f] = averageNormals(before[f], after[f]);
+    sampleNormals.push(faces);
+  }
+
+  // Pass 3: loft. Outward is computed per face from the ring's own centroid
+  // rather than assumed, so a locally reversed left/right (a hairpin) still
+  // orients correctly instead of silently inverting.
+  for (let i = 0; i < segmentCount; i++) {
+    const a = rings[i],
+      b = rings[i + 1];
+    const n0 = sampleNormals[i],
+      n1 = sampleNormals[i + 1];
+    for (let k = 0; k < faceCount; k++) {
+      const k1 = (k + 1) % faceCount;
+      builder.quadShaded(a[k], b[k], b[k1], a[k1], n0[k], n1[k], n1[k], n0[k], faceOutward(a, k));
+    }
   }
 
   // End caps, so an unreplaced ground tie-in never looks through an open box.
-  const first = samples[0];
-  const firstOutward: Vec3 = (() => {
-    const t = tangentAt(samples, 0);
-    return [-t[0], -t[1], -t[2]];
-  })();
-  builder.quad(
-    first.left,
-    first.right,
-    lower(first.right, surface.thickness),
-    lower(first.left, surface.thickness),
-    firstOutward,
-  );
-  const last = samples[samples.length - 1];
-  const lastOutward = tangentAt(samples, samples.length - 1);
-  builder.quad(
-    last.right,
-    last.left,
-    lower(last.left, surface.thickness),
-    lower(last.right, surface.thickness),
-    lastOutward,
-  );
+  const firstTangent = tangentAt(samples, 0);
+  builder.fan(rings[0], [-firstTangent[0], -firstTangent[1], -firstTangent[2]]);
+  builder.fan(rings[rings.length - 1], tangentAt(samples, samples.length - 1));
 
   return builder.toMeshData();
 }
@@ -172,11 +321,81 @@ const DEGENERATE_LENGTH = 1e-6; // meters; skips zero-length edge segments
  * vertex-deduplicated), and a rail this thin has no visible open end except
  * at the two extreme, cosmetically negligible tips of the whole run.
  */
+/**
+ * Paint sits only millimetres proud of the carriageway. It has to: on a wide
+ * deck the 2% crown rises almost exactly the kerb's own height (0.14 m over
+ * a 7 m half-width, against a 0.15 m upstand), so a centre line lifted much
+ * further would float above the kerb it is supposed to sit between.
+ */
+const MARKING_LIFT = 0.006;
+const MARKING_WIDTH = 0.14; // painted line width
+const EDGE_LINE_INSET = 0.1; // fraction of the carriageway in from each kerb foot
+const DASH_PERIOD = 9; // meters of dash + gap
+const DASH_ON = 4.5; // meters of paint within each period
+
+/**
+ * A point on the crowned carriageway at lateral fraction `u` (0 at the left
+ * kerb foot, 1 at the right), lifted clear of the surface.
+ *
+ * Mirrors `profiledRing`'s section exactly: the carriageway runs from the
+ * kerb foot up to the crown and back down, so height falls off linearly with
+ * distance from the centre.
+ */
+function carriagewayPoint(s: ProfileSample, u: number): Vec3 {
+  const width = Math.hypot(s.left[0] - s.right[0], s.left[2] - s.right[2]);
+  const kerbWidth = Math.min(MAX_KERB_WIDTH, width * KERB_WIDTH_FRACTION);
+  const inset = width > 0 ? kerbWidth / width : 0;
+  const p = lerp3(s.left, s.right, inset + u * (1 - 2 * inset));
+  const crownRise = (width / 2) * CROSSFALL * (1 - Math.abs(2 * u - 1));
+  return [p[0], p[1] - KERB_HEIGHT + crownRise + MARKING_LIFT, p[2]];
+}
+
+/**
+ * Painted lane markings on the carriageway: a dashed centreline and a solid
+ * edge line inside each kerb.
+ *
+ * Geometry alone reads as a raised structure; the paint is what says *road*.
+ * Emitted as its own buffer rather than as part of the deck because it needs
+ * a different material colour, and because it is optional — `details-data.ts`
+ * drops it under triangle pressure the same way it drops rails, before ever
+ * touching the mandatory deck.
+ */
+export function buildMarkingMesh(surface: BridgeSurface): BridgeMeshData {
+  const builder = new MeshBuilder();
+  const samples = surface.samples;
+  if (samples.length < 2) return builder.toMeshData();
+
+  const up: Vec3 = [0, 1, 0];
+  const halfWidthFraction = (s: ProfileSample): number => {
+    const width = Math.hypot(s.left[0] - s.right[0], s.left[2] - s.right[2]);
+    return width > 0 ? MARKING_WIDTH / 2 / width : 0;
+  };
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const s0 = samples[i],
+      s1 = samples[i + 1];
+    const mid = (s0.distance + s1.distance) / 2;
+    const centreIsPainted = mid % DASH_PERIOD < DASH_ON;
+    const lines: number[] = [EDGE_LINE_INSET, 1 - EDGE_LINE_INSET];
+    if (centreIsPainted) lines.push(0.5);
+
+    for (const u of lines) {
+      const h0 = halfWidthFraction(s0),
+        h1 = halfWidthFraction(s1);
+      builder.quad(
+        carriagewayPoint(s0, u - h0),
+        carriagewayPoint(s1, u - h1),
+        carriagewayPoint(s1, u + h1),
+        carriagewayPoint(s0, u + h0),
+        up,
+      );
+    }
+  }
+  return builder.toMeshData();
+}
+
 export function buildRailMesh(edges: readonly [Vec3, Vec3][]): BridgeMeshData {
   const builder = new MeshBuilder();
-  const half = RAIL_THICKNESS / 2;
-  const top = RAIL_CENTER_OFFSET + half;
-  const bottom = RAIL_CENTER_OFFSET - half;
   for (const [a, b] of edges) {
     const dx = b[0] - a[0],
       dz = b[2] - a[2];
@@ -189,18 +408,27 @@ export function buildRailMesh(edges: readonly [Vec3, Vec3][]): BridgeMeshData {
       p[1] + y,
       p[2] + offsetZ,
     ];
-    const topA0 = raised(a, nx * half, nz * half, top);
-    const topA1 = raised(a, -nx * half, -nz * half, top);
-    const topB0 = raised(b, nx * half, nz * half, top);
-    const topB1 = raised(b, -nx * half, -nz * half, top);
-    const botA0 = raised(a, nx * half, nz * half, bottom);
-    const botA1 = raised(a, -nx * half, -nz * half, bottom);
-    const botB0 = raised(b, nx * half, nz * half, bottom);
-    const botB1 = raised(b, -nx * half, -nz * half, bottom);
-    builder.quad(topA0, topB0, topB1, topA1, [0, 1, 0]);
-    builder.quad(botA1, botB1, botB0, botA0, [0, -1, 0]);
-    builder.quad(topA0, topA1, botA1, botA0, [nx, 0, nz]);
-    builder.quad(topB1, topB0, botB0, botB1, [-nx, 0, -nz]);
+    // One prism per rail course. A single bar at hand height reads as a
+    // floating line; a parapet is recognisable because it has a handrail and
+    // at least one rail below it, with the posts (bridgeAccessories) tying
+    // them to the kerb.
+    for (const { offset, thickness } of RAIL_COURSES) {
+      const half = thickness / 2;
+      const top = offset + half;
+      const bottom = offset - half;
+      const topA0 = raised(a, nx * half, nz * half, top);
+      const topA1 = raised(a, -nx * half, -nz * half, top);
+      const topB0 = raised(b, nx * half, nz * half, top);
+      const topB1 = raised(b, -nx * half, -nz * half, top);
+      const botA0 = raised(a, nx * half, nz * half, bottom);
+      const botA1 = raised(a, -nx * half, -nz * half, bottom);
+      const botB0 = raised(b, nx * half, nz * half, bottom);
+      const botB1 = raised(b, -nx * half, -nz * half, bottom);
+      builder.quad(topA0, topB0, topB1, topA1, [0, 1, 0]);
+      builder.quad(botA1, botB1, botB0, botA0, [0, -1, 0]);
+      builder.quad(topA0, topA1, botA1, botA0, [nx, 0, nz]);
+      builder.quad(topB1, topB0, botB0, botB1, [-nx, 0, -nz]);
+    }
   }
   return builder.toMeshData();
 }

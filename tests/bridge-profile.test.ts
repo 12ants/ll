@@ -242,8 +242,13 @@ describe("solveBridge", () => {
     expect(solution.status).toBe("incomplete");
   });
 
-  it("rejects a junction reached inside the approach, before the transition completes", () => {
-    // West approach: bridge(100,0) -- 5m -- junction(95,0) -- 205m -- (-200,0), plus a side road at (95,0)->(95,50).
+  it("carries the approach straight through a side-road junction instead of rejecting there", () => {
+    // West approach: bridge(100,0) -- 5m -- junction(95,0) -- on to (-200,0),
+    // with a side road at (95,0)->(95,50). The main road runs dead straight
+    // through that junction, so the ramp has 295m of room; stopping at the
+    // junction (the old behaviour) discarded a perfectly good bridge.
+    // Measured on real fixtures, this shape is the single largest cause of
+    // bridges not rendering at all.
     const bridge = roadFeature({
       coordinates: metersLine([[100, 0], [200, 0]]),
       layer: 1,
@@ -256,7 +261,32 @@ describe("solveBridge", () => {
     const graph = buildRoadGraph([west, side, bridge, east], ORIGIN);
     const solution = solveBridge(graph, NEVER_SAMPLE, {
       terrain: false,
-      maxGrade: READY_MAX_GRADE, // requires ~20m; junction sits 5m from the bridge (residual ~1.7m)
+      maxGrade: READY_MAX_GRADE,
+      maxApproach: 250,
+    });
+    expect(solution.status).toBe("ready");
+  });
+
+  it("refuses to turn a descending ramp down a perpendicular cross street", () => {
+    // Same 5m-to-junction geometry, but the main road ENDS at the junction and
+    // the only ways on are perpendicular. Running the ramp down a cross street
+    // would look worse than drawing nothing, so this must still reject --
+    // the guard that keeps "carry on through junctions" from becoming
+    // "render everything, badly".
+    const bridge = roadFeature({
+      coordinates: metersLine([[100, 0], [200, 0]]),
+      layer: 1,
+      brunnel: "bridge",
+      id: "bridge",
+    });
+    const stub = roadFeature({ coordinates: metersLine([[95, 0], [100, 0]]), id: "stub" });
+    const northArm = roadFeature({ coordinates: metersLine([[95, 0], [95, 120]]), id: "north" });
+    const southArm = roadFeature({ coordinates: metersLine([[95, 0], [95, -120]]), id: "south" });
+    const east = roadFeature({ coordinates: metersLine([[200, 0], [300, 0]]), id: "east" });
+    const graph = buildRoadGraph([stub, northArm, southArm, bridge, east], ORIGIN);
+    const solution = solveBridge(graph, NEVER_SAMPLE, {
+      terrain: false,
+      maxGrade: READY_MAX_GRADE,
       maxApproach: 250,
     });
     expect(solution.status).toBe("infeasible");
@@ -304,27 +334,26 @@ describe("solveBridge", () => {
     expect(solution.status).toBe("ready");
   });
 
-  it("still rejects a junction whose height gap exceeds the tolerance, even though it's closer to the required length than the first fixture", () => {
-    // Junction at 12m leaves a residual of ~0.70m — over JUNCTION_HEIGHT_TOLERANCE,
-    // despite being closer to the 20m requirement than the first rejection fixture
-    // (5m). This is the "never junction-found-therefore-accept" guard.
+  it("still rejects when the approach dead-ends short, with no continuation to follow", () => {
+    // The "never junction-found-therefore-accept" guard, restated for the
+    // behaviour that actually remains: a junction is only usable when some
+    // arm continues roughly straight on. Here the approach simply stops 12m
+    // out with nothing beyond it, so the residual height gap stands.
     const bridge = roadFeature({
       coordinates: metersLine([[100, 0], [200, 0]]),
       layer: 1,
       brunnel: "bridge",
       id: "bridge",
     });
-    const west = roadFeature({ coordinates: metersLine([[-200, 0], [100, 0]]), id: "west" });
-    const side = roadFeature({ coordinates: metersLine([[88, 0], [88, 50]]), id: "side" }); // 12m from the bridge node
+    const shortWest = roadFeature({ coordinates: metersLine([[88, 0], [100, 0]]), id: "west" });
     const east = roadFeature({ coordinates: metersLine([[200, 0], [300, 0]]), id: "east" });
-    const graph = buildRoadGraph([west, side, bridge, east], ORIGIN);
+    const graph = buildRoadGraph([shortWest, bridge, east], ORIGIN);
     const solution = solveBridge(graph, NEVER_SAMPLE, {
       terrain: false,
       maxGrade: READY_MAX_GRADE,
       maxApproach: 250,
     });
     expect(solution.status).toBe("infeasible");
-    if (solution.status === "infeasible") expect(solution.reason).toMatch(/junction/);
   });
 
   it("keeps full grade-separation clearance for an explicitly multi-level (layer >= 2) bridge", () => {
@@ -351,6 +380,61 @@ describe("solveBridge", () => {
     if (solution.status !== "ready") return;
     const deckHeight = Math.max(...solution.surfaces[0].samples.map((s) => s.center[1]));
     expect(deckHeight).toBeCloseTo(4.5, 5); // GRADE_SEPARATION_CLEARANCE_MAJOR
+  });
+
+  // --- mitered deck edges through bends ---
+  // Offsetting every sample by exactly half-width is only correct on a
+  // straight run; at a bend the adjacent segments' offset edges meet beyond
+  // half-width, so an unmitered deck visibly narrows through every curve.
+  const edgeOffset = (s: ProfileSample): number =>
+    Math.hypot(s.left[0] - s.center[0], s.left[2] - s.center[2]);
+
+  function cornerGraph(corner: [number, number][]): RoadGraph {
+    const bridge = roadFeature({
+      coordinates: metersLine(corner),
+      layer: 1,
+      brunnel: "bridge",
+      id: "bridge",
+    });
+    const entry = roadFeature({ coordinates: metersLine([[0, 0], corner[0]]), id: "entry" });
+    const exitStart = corner[corner.length - 1];
+    const exit = roadFeature({
+      coordinates: metersLine([exitStart, [exitStart[0], exitStart[1] + 150]]),
+      id: "exit",
+    });
+    return buildRoadGraph([entry, bridge, exit], ORIGIN);
+  }
+
+  it("miters the deck edge through a bend instead of pinching the width", () => {
+    // An L: 100 m east, then 100 m north. The corner turns through 90 deg.
+    const solution = solveBridge(cornerGraph([[100, 0], [200, 0], [200, 100]]), NEVER_SAMPLE, {
+      terrain: false,
+      maxGrade: READY_MAX_GRADE,
+      maxApproach: 250,
+    });
+    expect(solution.status).toBe("ready");
+    if (solution.status !== "ready") return;
+    const offsets = solution.surfaces[0].samples.map(edgeOffset);
+    // Straight stretches keep exactly half-width...
+    expect(Math.min(...offsets)).toBeCloseTo(7, 3); // width 14 / 2
+    // ...and the corner is pushed out along the bisector by exactly
+    // 1 / cos(45 deg), which is what makes the two edges actually meet.
+    expect(Math.max(...offsets)).toBeCloseTo(7 / Math.cos(Math.PI / 4), 2);
+  });
+
+  it("bounds the miter at a hairpin instead of throwing the edge off to infinity", () => {
+    // A near-reversal: 1/cos(theta/2) diverges here, so only the clamp keeps
+    // the deck finite. Bounded-and-pinched is the required behaviour.
+    const solution = solveBridge(
+      cornerGraph([[100, 0], [200, 0], [101, 6], [101, 20]]),
+      NEVER_SAMPLE,
+      { terrain: false, maxGrade: READY_MAX_GRADE, maxApproach: 250 },
+    );
+    if (solution.status !== "ready") return; // geometry may legitimately reject; the bound is what matters
+    for (const s of solution.surfaces[0].samples) {
+      expect(Number.isFinite(edgeOffset(s))).toBe(true);
+      expect(edgeOffset(s)).toBeLessThanOrEqual(7 * 2 + 1e-6); // MAX_MITER_EXTENSION
+    }
   });
 });
 

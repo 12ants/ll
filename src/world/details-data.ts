@@ -22,7 +22,7 @@ import {
   DEFAULT_MAX_APPROACH,
   defaultMaxGradeForEdge,
 } from "./bridge-profile";
-import { buildBridgeMesh, buildRailMesh } from "./bridge-mesh";
+import { buildBridgeMesh, buildRailMesh, buildMarkingMesh, type DeckProfile } from "./bridge-mesh";
 import { exposedBridgeEdges, bridgeAccessories } from "./bridge-boundaries";
 import type { BridgeMeshData, BridgeSurface, Vec3 } from "./bridge-model";
 export interface Detail {
@@ -43,6 +43,10 @@ export interface BridgeMeshEntry {
    * "drop optional details before falling back an entire component": the
    * deck itself is never affected. */
   rail: BridgeMeshData | null;
+  /** Painted lane markings, or `null` when the deck is far enough away to use
+   * the slab section (no carriageway to paint) or the triangle budget dropped
+   * them. Optional in exactly the same sense as `rail`. */
+  markings: BridgeMeshData | null;
 }
 export interface WorldDetails {
   origin: [number, number];
@@ -93,9 +97,23 @@ function collectReadyBridgeSurfaces(
   origin: Position,
 ): BridgeSurface[] {
   if (!c.bridges || map.getZoom() < 13.5) return [];
-  const raw = map.queryRenderedFeatures(undefined, {
-    layers: ["roads", "bridges"].filter((id) => !!map.getLayer(id)),
-  });
+  // Above this zoom the viewport is narrower than a bridge's approach chain
+  // can be long (DEFAULT_MAX_APPROACH is 250 m), so the on-screen features
+  // alone cannot contain the roads a ramp has to descend along. Measured on
+  // the committed fixtures, centred on a real bridge: the graph shrinks from
+  // 103 bridge edges at z15.5 to 3 at z18, and the solve rate goes 12/103 ->
+  // 0/3 — bridges vanish exactly when the camera gets close enough to see
+  // their kerbs and lane markings. Past the threshold the graph is built from
+  // the source's loaded tiles instead, which extend well beyond the screen.
+  // Below it the rendered query is kept: it is narrower, and a dense low-zoom
+  // view is already the expensive case.
+  const WIDE_GRAPH_ZOOM = 16;
+  const raw =
+    map.getZoom() >= WIDE_GRAPH_ZOOM
+      ? map.querySourceFeatures("world", { sourceLayer: "transportation" })
+      : map.queryRenderedFeatures(undefined, {
+          layers: ["roads", "bridges"].filter((id) => !!map.getLayer(id)),
+        });
   const features: WorldFeature[] = raw.map((f, i) => {
     const feature: Feature = {
       type: "Feature",
@@ -103,10 +121,15 @@ function collectReadyBridgeSurfaces(
       properties: f.properties,
       geometry: f.geometry,
     };
+    // querySourceFeatures returns no style layer, so classify from the same
+    // property buildRoadGraph itself keys off rather than inventing a second
+    // rule that could disagree with it.
+    const styleLayer = (f as Partial<MapGeoJSONFeature>).layer;
+    const layerId = styleLayer?.id ?? (f.properties?.brunnel === "bridge" ? "bridges" : "roads");
     return {
-      key: `${featureKey("world", f.layer.id, feature)} ${i}`,
+      key: `${featureKey("world", layerId, feature)} ${i}`,
       source: "world",
-      sourceLayer: f.layer.id,
+      sourceLayer: layerId,
       feature,
       revision: 1,
       completeness: "fragment",
@@ -128,6 +151,31 @@ function collectReadyBridgeSurfaces(
     maxApproach: DEFAULT_MAX_APPROACH,
   });
   return surfaces;
+}
+
+/**
+ * Distance beyond which a deck drops to the plain slab section.
+ *
+ * The profiled carriageway costs measured 1.86x the slab's triangles (52 vs
+ * 28 on the mesh suite's four-sample fixture), and a dense view already peaks
+ * near 17k deck triangles against the balanced tier's 25k ceiling — so
+ * building the full section everywhere would push past the budget and start
+ * shedding railings exactly where bridges are densest. Past this range the
+ * kerb's 15 cm upstand and the 2% crown are well under a pixel, so the slab
+ * is visually indistinguishable and costs 46% less.
+ *
+ * Geometry is already in meters relative to the camera (see
+ * `localMeters()`), so distance is just the sample's own magnitude.
+ */
+const DECK_PROFILE_DISTANCE = 350; // meters
+
+function deckProfileFor(surface: BridgeSurface): DeckProfile {
+  let nearest = Infinity;
+  for (const s of surface.samples) {
+    const d = Math.hypot(s.center[0], s.center[2]);
+    if (d < nearest) nearest = d;
+  }
+  return nearest <= DECK_PROFILE_DISTANCE ? "full" : "slab";
 }
 
 /** A bounded enrichment pass, run after tile loading/movement, never per frame. */
@@ -157,16 +205,25 @@ export function collectDetails(map: MapLibreMap, c: WorldConfig): WorldDetails {
   let bridgeTriangleTotal = 0;
   const bridgeTriangleBudget = QUALITY[c.quality].bridgeTriangles;
   result.bridges = readySurfaces.map((surface) => {
-    const mesh = buildBridgeMesh(surface);
+    const profile = deckProfileFor(surface);
+    const mesh = buildBridgeMesh(surface, profile);
     bridgeTriangleTotal += mesh.indices.length / 3;
     const railMesh = buildRailMesh(exposedBridgeEdges([surface]));
     const railTriangles = railMesh.indices.length / 3;
     const fitsBudget = bridgeTriangleTotal + railTriangles <= bridgeTriangleBudget;
     if (fitsBudget) bridgeTriangleTotal += railTriangles;
+    // Markings only exist on the profiled section -- the slab has no crowned
+    // carriageway to paint -- and are the first thing dropped after rails.
+    const markingMesh = profile === "full" ? buildMarkingMesh(surface) : null;
+    const markingTriangles = markingMesh ? markingMesh.indices.length / 3 : 0;
+    const markingsFit =
+      markingMesh !== null && bridgeTriangleTotal + markingTriangles <= bridgeTriangleBudget;
+    if (markingsFit) bridgeTriangleTotal += markingTriangles;
     return {
       mesh,
       color: surface.thickness > 0.9 ? MAJOR_SURFACE_COLOR : PALETTES[c.palette].road,
       rail: fitsBudget ? railMesh : null,
+      markings: markingsFit ? markingMesh : null,
     };
   });
   // Support posts: a separate, deterministic 500-instance cap (matching the

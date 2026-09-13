@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from "react";
 import { BufferAttribute, type BufferGeometry } from "three";
 import type { BridgeMeshEntry } from "./details-data";
 import type { BridgeMeshData } from "./bridge-model";
-import { ACCESSORY_COLOR } from "./bridge-boundaries";
+import { ACCESSORY_COLOR, MARKING_COLOR } from "./bridge-boundaries";
 
 /**
  * Renders one indexed R3F mesh from a `BridgeMeshData` buffer — shared by
@@ -42,6 +42,12 @@ export function BridgeMeshes({ entries }: { entries: BridgeMeshEntry[] }) {
       {entries.map(
         (entry, i) =>
           entry.rail && <MeshBuffer key={`rail-${i}`} data={entry.rail} color={ACCESSORY_COLOR} />,
+      )}
+      {entries.map(
+        (entry, i) =>
+          entry.markings && (
+            <MeshBuffer key={`marking-${i}`} data={entry.markings} color={MARKING_COLOR} />
+          ),
       )}
     </>
   );

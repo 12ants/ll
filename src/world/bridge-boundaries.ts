@@ -33,10 +33,24 @@ import type { StructurePart } from "./structures";
 // (fallback) box bridge's rails, not a visually distinct redesign.
 export const RAIL_CENTER_OFFSET = 0.95; // meters above the finished roadway top
 export const RAIL_THICKNESS = 0.14;
+/**
+ * The rail courses a parapet is built from, as (centre height, thickness)
+ * above the deck edge. The handrail keeps the original offset and thickness
+ * so existing callers and screenshots stay comparable; the lower course is
+ * what makes the run read as a railing rather than a single floating bar,
+ * and sits roughly halfway down to the kerb it stands on.
+ */
+export const RAIL_COURSES: readonly { offset: number; thickness: number }[] = [
+  { offset: RAIL_CENTER_OFFSET, thickness: RAIL_THICKNESS },
+  { offset: 0.52, thickness: 0.09 },
+];
 const POST_SIZE = 0.14;
 const POST_HEIGHT = 0.75;
 const POST_CENTER_OFFSET = 0.6; // top of the post overlaps the rail slightly, same as structures.ts's box bridge
 export const ACCESSORY_COLOR = "#7c8179";
+/** Lane paint. Warm off-white so it reads as paint under the scene's light
+ * rather than as a glowing strip. */
+export const MARKING_COLOR = "#d9d5c4";
 
 // Pier constants match structures.ts's existing collectBridgeParts() pier
 // policy exactly, so a published mesh bridge's piers read as the same

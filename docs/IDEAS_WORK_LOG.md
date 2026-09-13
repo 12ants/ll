@@ -2124,6 +2124,218 @@ The fixture harness is the natural base for the matrix work, since it makes repe
 zoom/bearing/pitch runs fast and deterministic; extending it to terrain would mean committing DEM
 tiles for one terrain-on city.
 
+## 2026-09-12 — B5 offline camera matrix, then bridge geometry realism
+
+**Status:** B5 camera-matrix runner built and partially run, then deliberately stopped; bridge
+geometry realism work started and largely landed. B5 remains unchecked.
+
+### B5 camera matrix (`tests/browser/bridge-matrix.mjs`, new, uncommitted)
+
+Reconnaissance first, because the naive 864-cell cross product was unaffordable and two of its
+axes turned out not to be axes at all:
+
+- **devicePixelRatio is not a geometry axis.** Six cameras probed at DPR 1 and 2 came back
+  bit-identical (decks, rails, triangles, every instance count). The grid was halved on that
+  evidence, and the runner re-verifies it in a trailing 12-cell pass rather than assuming it.
+- **Sub-threshold zooms are invariant to bearing and pitch.** 48/48 recon cells at z11.5–13.4
+  published 0 decks regardless of camera angle, so those are swept once per city, not twelve times.
+- **Cost tracks published geometry, not zoom.** z13.6 (~61–83 s/cell) is *cheaper* than z14
+  (56–353 s/cell): below OpenFreeMap's maxzoom 14 the same ground costs fewer tiles.
+
+**Measured, Gamla Stan block (92 cells, of which 88 in the city grid):** 83 measurable cells, 39
+publishing; max 30 decks / 17,280 bridge triangles; **0** violations of every invariant checked —
+`rails > decks`, the triangle bound, sub-threshold silence, non-finite bounding spheres,
+unexpected terrain, page errors. Max distance of any bridge mesh from the camera origin was
+3,413 m against a 20,000 m stale-frame guard, so no mesh was ever left in a previous camera's
+local-meters frame. 50 fixture 404s, exclusively in pitched far-field views.
+
+**Two findings that change how this suite should be read:**
+
+1. **Per-cell deck counts are not reproducible across runs.** The same camera gave recon 36 decks
+   and the matrix 22 at `z14 b0 p60`; at `z14 b180 p0`, recon 36 vs matrix 16 — with
+   `settled: true` on the matrix side. Counts depend on tile-cache history, so they are
+   descriptive, not acceptance evidence. **The invariants are the evidence.**
+2. **Unsettled cells are the wide pitched low-zoom corner** (4 of the first 5 at pitch 60). At high
+   pitch the horizon pulls in an effectively unbounded tile set; arrivals keep re-firing the 250 ms
+   debounced collection, so the mesh count never holds steady. A longer deadline does **not** fix
+   this, and that is measured rather than argued: recon used a 15 s stability cap and the matrix
+   120 s, and the same cell cost 351,847 ms vs 353,229 ms — 1.4 s apart across an 8x deadline
+   change. The correct fix is event-driven (await MapLibre `idle`), and is **not** done.
+
+The runner was hardened accordingly: unsettled cells go to a separate `unmeasured[]` list and are
+excluded from the relational checks (a mid-collection read can false-fire every one of them), the
+DPR pass skips unsettled pairs and reports how many it actually compared, and the final verdict
+names how many cells it covers. **That hardening is written but never executed** — the in-flight
+run held the pre-edit file in memory.
+
+`.artifacts/` is gitignored (`.gitignore:7`), so `matrix.jsonl` is not committed evidence; the
+numbers above are quoted inline for that reason. The pre-change baseline is preserved outside the
+repo at `matrix-prechange-baseline.jsonl`.
+
+**Stopped deliberately at 92 of 312 cells** when the task changed to rewriting bridge geometry:
+continuing a multi-hour verification of geometry about to be replaced is waste. Amsterdam and
+Manhattan never ran, so the triangle-budget invariant (`rails < decks`) is **unexercised** —
+Gamla Stan never binds the budget.
+
+### The finding that should drive bridge priority
+
+A reject census (replicating `collectBridgeSurfaces` but keeping the `rejected` array
+`details-data.ts` discards) shows **70–95% of bridge edges in a real view never render at all**:
+
+| view | bridge edges | solved | solve rate |
+| --- | --- | --- | --- |
+| Gamla Stan z15 | 89 | 4 | 4.5% |
+| Gamla Stan z14 | 220 | 16 | 7.3% |
+| Gamla Stan z13.6 | 157 | 23 | 14.6% |
+| Amsterdam z15 | 138 | 30 | 21.7% |
+| Amsterdam z14 | 440 | 115 | 26.1% |
+| Amsterdam z13.6 | 421 | 124 | 29.5% |
+
+`bridge-profile.ts`'s own doc comment already said "the overwhelming majority fail"; this puts a
+number on it. Every cross-section improvement below polishes the minority that survive.
+
+### Bridge geometry realism (implemented, uncommitted)
+
+Design: `docs/superpowers/specs/2026-09-12-bridge-realism-design.md`.
+
+- **Mitered deck edges** (`bridge-profile.ts`): offset along the bisector scaled by
+  `1/cos(theta/2)`, clamped by extension length (<= 2x half-width) rather than by angle, since the
+  factor diverges at a reversal and OSM carries real hairpins. Verified at exactly
+  `7/cos(45 deg) = 9.899 m` on a 90-degree corner, where it previously stayed 7 m and pinched.
+- **Smooth longitudinal shading** (`bridge-mesh.ts`): normals averaged along the run only, never
+  across the section, so curves shade continuously while kerb/crown/fascia edges stay hard creases.
+  Triangle count and ordering unchanged.
+- **Crowned carriageway with kerbs and fascias** (`bridge-mesh.ts`): 7-point section ring, 2%
+  crossfall, 0.15 m kerb upstand. `ProfileSample.left`/`right` keep meaning the outer deck edge and
+  the detail is carved inward and below, so `bridge-profile.ts` and `bridge-boundaries.ts` needed
+  no change and railings already land on the kerb top.
+- **Distance LOD** (`details-data.ts`): full section within 350 m, plain slab beyond. Justified by
+  measurement, not estimate — the profiled section is **52 triangles vs 28, i.e. 1.86x** (an
+  earlier "roughly 4x" claim was a guess and was wrong). Against the measured 17,280 peak that is
+  32,090 against a 25,000 balanced ceiling, so LOD is required.
+- **Two-course parapet and painted markings**: handrail keeps the original 0.95 m / 0.14 m so prior
+  captures stay comparable, plus a 0.52 m / 0.09 m lower course; solid edge lines inside each kerb
+  and a dashed centreline (9 m period, 4.5 m paint). Budget order is deck (mandatory) -> rails ->
+  markings.
+
+Constraint found while building: on a 14 m deck the 2% crown rises 0.14 m, essentially level with
+the 0.15 m kerb, leaving paint ~1 cm of headroom. Markings are lifted 6 mm.
+
+**Checks:** `pnpm test` 153/153 across 12 files; `tsc -b` clean; `vite build` succeeds (the
+>500 kB chunk warning is pre-existing). No browser verification of the new geometry has been run
+yet — the visual claims above are geometric and unit-tested, not screenshot-confirmed.
+
+**Not done, named:** junction rendering (the chosen headline tier) is not built; terrain-on
+(San Francisco/Chamonix) still has zero live-browser coverage and no DEM tiles are committed; no
+pre-B1-B4 performance baseline exists; the matrix runner's `unmeasured[]` path is unexecuted;
+superelevation through curves is not attempted.
+
+### Junction handling — the tally redirected the fix
+
+Reason tally over 1,251 rejections across 9 views: **981 (78.4%) junction-attributed**. But the
+distribution showed the obvious reading was wrong. `walked` before hitting the junction has median
+**3.1 m**, with **44% at exactly 0 m** — the bridge's own end node *is* the junction, so the
+approach walk never took a step. Residual height to descend: median **1.14 m**, 87% within 2 m.
+Junction degree 3 (619), 4 (325), 5 (36), 6 (1).
+
+So these are not branching decks needing patch geometry. They are ordinary bridges ending at
+ordinary junctions, needing roughly 14 m more road at the 8% limit, where `walkApproachChain`
+stopped dead. The file's own doc comment already named it: "the walk still stops at the first
+junction (it does not choose a 'straightest' continuation)".
+
+**Implemented instead of patch geometry:** the walk follows the straightest non-bridge continuation
+through a junction, gated at `MIN_CONTINUATION_ALIGNMENT = 0.5` (within 60 degrees of travel).
+Below that it stops and rejects exactly as before, so a descending ramp never turns down a
+perpendicular cross street. The degree-2 path is untouched, so the change is strictly additive: it
+can add solved bridges, never alter one that already solved.
+
+**Measured by re-running the same census, not predicted:**
+
+| view | solve rate before | after |
+| --- | --- | --- |
+| Gamla Stan z15 | 4.5% | **12.4%** |
+| Gamla Stan z14 | 7.3% | **12.7%** |
+| Gamla Stan z13.6 | 14.6% | **20.4%** |
+| Amsterdam z15 | 21.7% | **46.4%** |
+| Amsterdam z14 | 26.1% | **56.8%** |
+| Amsterdam z13.6 | 29.5% | **57.0%** |
+| Manhattan z14 | 27.9% | **34.9%** |
+
+Across the four heaviest views total rejections fell 702 -> 310, a 56% reduction. Junction-attributed
+rejects fell from 78.4% to 57.4% of the remainder; dead-end approaches are now the largest remaining
+category (40.3%), which is the natural next target if more recovery is wanted.
+
+Measuring rather than predicting mattered: the 981 rejections collapse to only **222 distinct**
+`(walked, required, residual)` signatures, so 78.4% counts *edges*, not independent sites, and the
+reject share alone would have over-promised.
+
+Two tests previously asserted the old reject-at-junction behaviour. They were rewritten, not
+deleted: the first fixture has the main road running dead straight through the junction (alignment
+1.0) with only the side road perpendicular (0.0), so it was encoding the bug — a good bridge was
+being discarded. A new test asserts that a bridge whose only continuations are perpendicular still
+rejects.
+
+**Checks after the junction change:** `pnpm test` 154/154 across 12 files; `tsc -b` clean;
+`vite build` succeeds.
+
+**Known cost, not yet quantified:** the post-fix census timed out waiting for `map.loaded()` at
+Amsterdam z14 (120 s), a view that completed before the change. More bridges solving means more
+meshes and more collection work, so this may be a real performance cost rather than only a heavy
+view; a longer-timeout re-run of the heavy views is in progress and this should be resolved before
+the work is considered finished.
+
+### Browser verification — and the bug it exposed
+
+Screenshots against the offline fixtures (`.artifacts/bridges/shots/`, gitignored) showed decks,
+continuous railings including down sloped ramps, piers, and ramps tying into ground. But every
+close-range shot was empty, and the cause turned out to be a real defect, not a camera mistake.
+
+`collectReadyBridgeSurfaces` built the road graph from `map.queryRenderedFeatures`, which returns
+**only what is on screen**. Above roughly z16 the viewport is narrower than a bridge's approach
+chain can be long (`DEFAULT_MAX_APPROACH` is 250 m), so the approach roads were simply absent from
+the graph. Measured, centred on a real bridge: the graph fell from **103 bridge edges at z15.5 to
+3 at z18**, and the solve rate from 12/103 to **0/3**. Bridges vanished exactly when the camera got
+close enough to see their kerbs and lane markings — so most of the cross-section work was
+unreachable in practice.
+
+**Fixed** by building the graph from `map.querySourceFeatures("world", {sourceLayer:
+"transportation"})` above z16, which reads the source's loaded tiles rather than the screen. Below
+that threshold the rendered query is kept, since a dense low-zoom view is already the expensive
+case. Features are classified with the same `properties.brunnel` rule `buildRoadGraph` itself uses,
+rather than a second rule that could disagree.
+
+Measured published meshes at the same bridge, before -> after: z16.5 ~11 -> **65**, z17.2 ~3 ->
+**65**, z18.0 **0** -> **66**.
+
+**Still not visible:** lane markings. Railing posts and both rail courses now read clearly at z18.8,
+but the paint does not. Next step is to find out whether it is being dropped by the triangle budget
+or is simply too subtle against the deck tone.
+
+### Performance: a real cost, and a wrong first fix
+
+Timed the real `collectDetails` in-page: Gamla Stan z15 ~4.8 s, Amsterdam z15 ~19 s, Amsterdam z14
+**~131 s**, all on the main thread. A hypothesis that `walkApproachChain`'s per-call rebuild of the
+node/edge maps was responsible proved **wrong** — hoisting it into a `WeakMap` cache left Amsterdam
+z14 unchanged at ~131 s. The hoist is kept (it removed genuine waste) but the bottleneck is
+elsewhere and is still unidentified. This is now the top item in `WORLD_DEPTH_PLAN.md`, because it
+blocks adding any further detail.
+
+### New planning documents (2026-09-13)
+
+- `docs/LIGHTING_AND_SHADOW_PLAN.md` — buildings are MapLibre `fill-extrusion` (`style.ts:252`) and
+  therefore absent from the three.js shadow pass, so nothing in the city casts a shadow on anything
+  else. Invisible shadow-caster proxies are the proposed unlock.
+- `docs/FACADE_TEXTURE_OPTIMIZATION_PLAN.md` — every window pane is its own box instance against a
+  hard cap (500/2,600/6,000 by tier, nearest 200 buildings within 750 m). Moving windows to a
+  repeating texture removes the scarcity that currently shapes the look, and reduces cost.
+- `docs/WORLD_DEPTH_PLAN.md` — depth and life-likeness ordered by visual return per millisecond,
+  with collection cost as the explicit prerequisite.
+
+**Next action:** find the real collection bottleneck by phase-profiling `collectDetails` Then quantify the Amsterdam z14
+settle cost above, and run the Amsterdam matrix block, which is the only one that exercises the
+triangle budget (`rails < decks`). The matrix runner's `unmeasured[]` hardening is still
+unexecuted code in the tree.
+
 ## Future entries
 
 For each entry record the date, task ID and status; the concrete change and files; exact checks and results; relevant artifact locations; unresolved cases or changed assumptions; and the next task. Preserve earlier entries so the log shows what was actually verified at each stage.
